@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hueFor, renderFrame, showSplash, SPLASH_ART } from '../src/banner.ts';
+import { hueFor, renderFrame, showSplash, SPLASH_ART, toRgb } from '../src/banner.ts';
 
 const ANSI = /\u001b\[/;
 
@@ -105,6 +105,25 @@ describe('启动横幅', () => {
             } else {
                 process.env['NO_COLOR'] = previous;
             }
+        }
+    });
+});
+
+
+describe('横幅配色', () => {
+    it('与 colorsys.hsv_to_rgb 一致：hue 50 是亮橙黄', () => {
+        expect(toRgb(50, 0.85)).toEqual([217, 181, 0]);
+        expect(toRgb(30, 0.85)).toEqual([217, 108, 0]);
+        expect(toRgb(70, 0.85)).toEqual([181, 217, 0]);
+    });
+
+    it('整个色相区间都不会发蓝（蓝通道远低于红/绿）', () => {
+        for (let hue = 30; hue <= 70; hue += 5) {
+            const [r, g, b] = toRgb(hue, 0.9);
+
+            expect(r).toBeGreaterThan(150);
+            expect(g).toBeGreaterThan(80);
+            expect(b).toBeLessThan(60);
         }
     });
 });

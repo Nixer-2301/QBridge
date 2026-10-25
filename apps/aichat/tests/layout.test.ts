@@ -11,13 +11,19 @@ describe('computeLayout', () => {
         expect(layout.body.height).toBe(18);
     });
 
-    it('矮窗口退化成单行标题，但状态框仍有 5 行', () => {
-        const layout = computeLayout(15);
+    it('15 行也能放下完整横幅', () => {
+        const layout = computeLayout(15, 80);
 
-        expect(layout.fullHeader).toBe(false);
-        expect(layout.header.height).toBe(2);
+        expect(layout.fullHeader).toBe(true);
+        expect(layout.header.height).toBe(7);
         expect(layout.footer.height).toBe(5);
-        expect(layout.body.height).toBe(8);
+        expect(layout.body.height).toBe(3);
+    });
+
+    it('窗口太矮或太窄时退化成单行标题', () => {
+        expect(computeLayout(14, 80).fullHeader).toBe(false);
+        expect(computeLayout(30, 50).fullHeader).toBe(false);
+        expect(computeLayout(30, 60).fullHeader).toBe(true);
     });
 
     it('极矮窗口压缩状态框并保留日志区', () => {
@@ -52,3 +58,4 @@ describe('computeLayout', () => {
         expect(bodyLineCapacity(layout)).toBe(layout.body.height - 1);
     });
 });
+

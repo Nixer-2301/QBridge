@@ -30,16 +30,20 @@ function valueFor(column: number, row: number, offset: number): number {
     return 0.85 + Math.sin(column * 0.15 + row * 0.3 - offset * 0.12) * 0.15;
 }
 
-function toRgb(hue: number, value: number): [number, number, number] {
-    const normalizedHue = ((hue % 360) + 360) % 360;
-    const channel = (shift: number): number => {
-        const k = (shift + normalizedHue / 30) % 12;
-        const amplitude = value * Math.min(Math.max(Math.min(k - 3, 9 - k), 0), 1);
+/**
+ * HSV(hue, 1, value) → RGB，和 Python `colorsys.hsv_to_rgb(hue/360, 1, val)` 等价。
+ * 标准公式：f(n) = v - v * max(0, min(k, 4 - k, 1))，k = (n + H/60) mod 6，
+ * R=f(5), G=f(3), B=f(1)。之前写成 H/30 且没夹住 k，导致蓝色通道恒为 255、整块发蓝。
+ */
+export function toRgb(hue: number, value: number): [number, number, number] {
+    const h = ((((hue % 360) + 360) % 360) / 60) % 6;
+    const channel = (n: number): number => {
+        const k = (n + h) % 6;
 
-        return Math.round(amplitude * 255);
+        return value - value * Math.max(0, Math.min(k, 4 - k, 1));
     };
 
-    return [channel(0), channel(8), channel(4)];
+    return [Math.round(channel(5) * 255), Math.round(channel(3) * 255), Math.round(channel(1) * 255)];
 }
 
 /** 渲染一帧；空格不上色，超宽时按终端宽度居中。 */
@@ -125,3 +129,4 @@ export async function showSplash(options: SplashOptions = {}): Promise<void> {
 
     stream.write(`${CLEAR}${renderFrame(SPLASH_ART, frames, { color: true, width })}\n\n`);
 }
+

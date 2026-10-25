@@ -31,13 +31,14 @@ class FakeInput extends EventEmitter {
     pause(): void {}
 }
 
-function createTui(overrides: { onQuit?: () => void } = {}) {
+function createTui(overrides: { onQuit?: () => void; animate?: boolean; frameMs?: number } = {}) {
     const stream = new FakeStream();
     const input = new FakeInput();
     const tui = new Tui({
         stream: stream as unknown as NodeJS.WriteStream,
         input: input as unknown as NodeJS.ReadStream,
-        animateFrames: 0,
+        animate: overrides.animate ?? false,
+        frameMs: overrides.frameMs,
         onQuit: overrides.onQuit ?? (() => undefined),
     });
 
@@ -150,7 +151,7 @@ describe('Tui', () => {
         const { tui, stream } = createTui();
 
         tui.start();
-        stream.rows = 15;
+        stream.rows = 12;
         stream.emit('resize');
         stream.output = '';
         tui.setStatus(status);
@@ -160,5 +161,45 @@ describe('Tui', () => {
         expect(plain).not.toContain('____');
         expect(plain).toContain('Q Bridge');
         expect(plain).toContain('已连接');
+    });
+});
+
+
+
+
+describe('Tui 横幅动画', () => {
+    it('持续循环动画，且每帧只重绘顶部区域', async () => {
+        const { tui, stream } = createTui({ animate: true, frameMs: 16 });
+
+        tui.start();
+        stream.output = '';
+        await new Promise((resolve) => setTimeout(resolve, 90));
+        tui.stop();
+
+        const raw = stream.output;
+        const frames = raw.split('\u001b[1;1H').length - 1;
+
+        expect(frames).toBeGreaterThanOrEqual(2);
+        expect(raw).toMatch(/38;2;/);
+        // 只重绘横幅：底部状态框的边框不应出现在动画帧里
+        expect(raw).not.toContain('└');
+    });
+
+    it('按 a 可以暂停与继续动画', async () => {
+        const { tui, stream, input } = createTui({ animate: true, frameMs: 16 });
+
+        tui.start();
+        input.emit('data', 'a');
+        stream.output = '';
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        expect(stream.output.split('\u001b[1;1H').length - 1).toBe(0);
+
+        input.emit('data', 'a');
+        stream.output = '';
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        expect(stream.output.split('\u001b[1;1H').length - 1).toBeGreaterThanOrEqual(1);
+        tui.stop();
     });
 });

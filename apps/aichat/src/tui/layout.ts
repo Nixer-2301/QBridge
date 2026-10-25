@@ -12,7 +12,8 @@ export interface Layout {
     fullHeader: boolean;
 }
 
-export const MIN_FULL_HEADER_ROWS = 24;
+export const MIN_FULL_HEADER_ROWS = 15;
+export const MIN_FULL_HEADER_COLS = 60;
 export const FOOTER_HEIGHT = 5;
 export const COMPACT_FOOTER_HEIGHT = 3;
 export const MIN_BODY_ROWS = 3;
@@ -22,8 +23,8 @@ export const ART_ROWS = 6;
  * 三段式布局：顶部横幅固定、底部状态框固定、中间日志区占剩余空间。
  * 窗口过矮时横幅退化成一行、状态框退化成一行，日志区至少保留 3 行。
  */
-export function computeLayout(rows: number, artRows: number = ART_ROWS): Layout {
-    const fullHeader = rows >= MIN_FULL_HEADER_ROWS;
+export function computeLayout(rows: number, cols = 80, artRows: number = ART_ROWS): Layout {
+    const fullHeader = rows >= MIN_FULL_HEADER_ROWS && cols >= MIN_FULL_HEADER_COLS;
     const headerHeight = fullHeader ? artRows + 1 : 2;
     const footerHeight =
         rows - headerHeight - MIN_BODY_ROWS >= FOOTER_HEIGHT ? FOOTER_HEIGHT : COMPACT_FOOTER_HEIGHT;
@@ -41,3 +42,4 @@ export function computeLayout(rows: number, artRows: number = ART_ROWS): Layout 
 export function bodyLineCapacity(layout: Layout): number {
     return Math.max(0, layout.body.height - 1);
 }
+

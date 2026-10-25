@@ -76,7 +76,7 @@ async function main(): Promise<void> {
               stream: process.stdout,
               input: process.stdin,
               onQuit: () => stopEverything?.('TUI 退出'),
-              animateFrames: argv.includes('--no-splash') || process.env['QB_NO_SPLASH'] === '1' ? 0 : 60,
+              animate: !(argv.includes('--no-splash') || process.env['QB_NO_SPLASH'] === '1'),
           })
         : undefined;
     const logger = createLogger(

@@ -18,6 +18,7 @@ import {
     stripAnsi,
 } from './ansi.ts';
 import { bodyLineCapacity, computeLayout } from './layout.ts';
+import type { Layout } from './layout.ts';
 import { LogBuffer } from './log-buffer.ts';
 import type { LogLevelName } from './log-buffer.ts';
 import { displayWidth, truncateAnsiToWidth } from './width.ts';
@@ -37,8 +38,10 @@ export interface TuiOptions {
     stream: NodeJS.WriteStream;
     input: NodeJS.ReadStream;
     maxLines?: number;
-    /** 头部动画帧数（每帧 40ms），0 表示不播放。 */
-    animateFrames?: number;
+    /** 是否持续播放头部动画（默认开，像 z.py 一样循环） */
+    animate?: boolean;
+    /** 每帧间隔毫秒，默认 40 */
+    frameMs?: number;
     onQuit: () => void;
 }
 
@@ -75,7 +78,8 @@ export class Tui {
     private readonly input: NodeJS.ReadStream;
     private readonly logs: LogBuffer;
     private readonly onQuit: () => void;
-    private readonly animateFrames: number;
+    private readonly animate: boolean;
+    private readonly frameMs: number;
 
     private status: TuiStatus = {
         connected: false,
@@ -100,7 +104,8 @@ export class Tui {
         this.input = options.input;
         this.onQuit = options.onQuit;
         this.logs = new LogBuffer(options.maxLines ?? 5_000);
-        this.animateFrames = options.animateFrames ?? 60;
+        this.animate = options.animate ?? true;
+        this.frameMs = Math.max(16, options.frameMs ?? FRAME_MS);
     }
 
     /** 供 createLogger 使用的 sink：终端里显示，同时由外层再落盘。 */
@@ -132,7 +137,7 @@ export class Tui {
 
         this.render();
 
-        if (this.animateFrames > 0) {
+        if (this.animate) {
             this.startAnimation();
         }
     }
@@ -173,17 +178,13 @@ export class Tui {
         this.render();
     }
 
+    /** 只重绘横幅区域，像 z.py 一样持续循环，不刷整屏、不打断日志阅读。 */
     private startAnimation(): void {
         this.stopAnimation();
         this.timer = setInterval(() => {
             this.frame += 1;
-
-            if (this.frame >= this.animateFrames) {
-                this.stopAnimation();
-            }
-
-            this.render();
-        }, FRAME_MS);
+            this.renderHeader();
+        }, this.frameMs);
         this.timer.unref?.();
     }
 
@@ -201,13 +202,47 @@ export class Tui {
         };
     }
 
+    /** 顶部横幅的每一行；整屏渲染与动画局部重绘共用。 */
+    private headerLines(cols: number, layout: Layout): string[] {
+        if (!layout.fullHeader) {
+            return [`${FG.orange}${BOLD} Q Bridge ${RESET}${DIM}· QQ 群 AI 助手${RESET}`, ''];
+        }
+
+        const art = artFrame(this.frame, { color: true });
+        const artWidth = Math.max(...art.map((line) => displayWidth(stripAnsi(line))));
+        const pad = ' '.repeat(Math.max(0, Math.floor((cols - artWidth) / 2)));
+
+        return [...art.map((line) => pad + line), ''];
+    }
+
+    /**
+     * 只重写横幅区域：动画每帧只碰顶部几行，
+     * 不整屏重绘，所以日志区不会闪、也不会打断滚动阅读。
+     */
+    private renderHeader(): void {
+        if (!this.started) {
+            return;
+        }
+
+        const { rows, cols } = this.size();
+        const layout = computeLayout(rows, cols);
+        const lines = this.headerLines(cols, layout);
+        let output = '';
+
+        for (let index = 0; index < lines.length; index += 1) {
+            output += `${moveTo(index + 1, 1)}${CLEAR_LINE}${truncateAnsiToWidth(lines[index] ?? '', cols)}`;
+        }
+
+        this.stream.write(output);
+    }
+
     private render(): void {
         if (!this.started) {
             return;
         }
 
         const { rows, cols } = this.size();
-        const layout = computeLayout(rows);
+        const layout = computeLayout(rows, cols);
         const capacity = bodyLineCapacity(layout);
         const view = this.logs.window(capacity);
         const lines: string[] = [];
@@ -286,7 +321,7 @@ export class Tui {
 
         const line1 = `${dot} ${state}  ${status.account}   ${DIM}模型${RESET} ${status.model}   ${DIM}滚动${RESET} ${scroll}`;
         const line2 = `${DIM}群${RESET} ${status.groups}  ${DIM}消息${RESET} ${status.events}  ${DIM}最近回复${RESET} ${status.lastReply}  ${DIM}运行${RESET} ${status.uptime}`;
-        const hint = `${DIM}滚轮/PgUp/PgDn 滚动 · End 回到底部 · r 重播动画 · q 退出 · 日志 ${status.logPath}${RESET}`;
+        const hint = `${DIM}滚轮/PgUp/PgDn 滚动 · End 回到底部 · a 暂停动画 · q 退出 · 日志 ${status.logPath}${RESET}`;
         const title = ' Q Bridge ';
         const wrap = (content: string): string =>
             `${DIM}│${RESET}${padFor(truncateAnsiToWidth(content, inner), inner)}${DIM}│${RESET}`;
@@ -297,7 +332,7 @@ export class Tui {
             return [top, wrap(line1), wrap(line2), wrap(hint), bottom];
         }
 
-        return [top, wrap(`${dot} ${state}  ${status.account}   ${DIM}群${RESET} ${status.groups}   ${DIM}r 重播 · q 退出${RESET}`), bottom];
+        return [top, wrap(`${dot} ${state}  ${status.account}   ${DIM}群${RESET} ${status.groups}   ${DIM}a 动画 · q 退出${RESET}`), bottom];
     }
 
     private handleInput(chunk: string): void {
@@ -322,8 +357,8 @@ export class Tui {
             return 0;
         }
 
-        const { rows } = this.size();
-        const capacity = bodyLineCapacity(computeLayout(rows));
+        const { rows, cols } = this.size();
+        const capacity = bodyLineCapacity(computeLayout(rows, cols));
 
         const mouse = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])/.exec(input);
 
@@ -384,10 +419,11 @@ export class Tui {
             return 1;
         }
 
-        if (char === 'r') {
-            this.frame = 0;
-
-            if (this.animateFrames > 0) {
+        if (char === 'a') {
+            // 暂停 / 继续横幅动画（默认一直循环，像 z.py）
+            if (this.timer) {
+                this.stopAnimation();
+            } else {
                 this.startAnimation();
             }
 
@@ -413,3 +449,6 @@ export class Tui {
         return 1;
     }
 }
+
+
+
