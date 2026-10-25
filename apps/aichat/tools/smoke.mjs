@@ -252,7 +252,8 @@ async function main() {
             [expected.quoted, '回复引用了触发消息'],
             [expected.text === REPLY, '回复内容来自模型'],
             [messages[0]?.role === 'system', '第一条是系统提示词'],
-            [messages.at(-1)?.content === '小明: 在吗，自检一下', '上下文里带发言人昵称'],
+            [String(messages.at(-1)?.content).endsWith('小明: 在吗，自检一下'), '上下文里带发言人昵称'],
+            [String(messages.at(-1)?.content).startsWith('@你 '), '当前提问带「@你」标记'],
             [request?.model === 'smoke-model', '请求使用配置里的模型名'],
         ];
 
@@ -280,3 +281,4 @@ async function main() {
 }
 
 main();
+

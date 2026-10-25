@@ -283,7 +283,8 @@ export class ChatService {
         const systemTemplate = this.options.prompts.systemFor(groupId);
         const system = systemTemplate
             .replace(/\{botName\}/g, config.bot.name)
-            .replace(/\{groupId\}/g, String(groupId));
+            .replace(/\{groupId\}/g, String(groupId))
+            .replace(/\{triggerMarker\}/g, config.bot.triggerMarker);
         const messages: ChatMessage[] = [{ role: 'system', content: system }, ...snapshot];
 
         // 整个请求（系统提示词 + 历史）都不超过 context.maxTokens，超出就从最旧的问答对开始丢。
@@ -294,6 +295,9 @@ export class ChatService {
                 messages.splice(1, 1);
             }
         }
+
+        // 给「正在问你的那条」打标记：群里其他人的提问只是背景，不能抢答。
+        this.markTrigger(messages, config.bot.triggerMarker);
 
         if (images.length === 0 || !config.vision.enabled) {
             return { messages, withImages: false };
@@ -332,6 +336,30 @@ export class ChatService {
         this.options.logger.info(`附带图片 ${parts.length} 张发给模型`, `群=${groupId}`);
 
         return { messages, withImages: true };
+    }
+
+    /** 只在当前这条提问前加标记；历史里旧消息保持原样，避免出现一堆同样的前缀。 */
+    private markTrigger(messages: ChatMessage[], marker: string): void {
+        const label = marker.trim();
+
+        if (label.length === 0) {
+            return;
+        }
+
+        const index = messages.length - 1;
+        const last = messages[index];
+
+        if (!last || last.role !== 'user') {
+            return;
+        }
+
+        const text = contentText(last.content);
+
+        if (text.startsWith(label)) {
+            return;
+        }
+
+        messages[index] = { role: 'user', content: `${label} ${text}` };
     }
 
     private async handleCommand(parsed: ParsedGroupMessage): Promise<boolean> {

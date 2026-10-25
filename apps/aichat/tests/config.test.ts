@@ -21,6 +21,7 @@ describe('parseConfig', () => {
         expect(config.prompt.hotReload).toBe(true);
         expect(config.bot.splitParagraphs).toBe(true);
         expect(config.bot.sentenceSplitAt).toBe(40);
+        expect(config.bot.triggerMarker).toBe('@你');
         expect(config.bot.maxReplySegments).toBe(4);
         expect(config.vision).toEqual({ enabled: true, maxImages: 4, maxBytes: 5_242_880 });
         expect(config.github).toEqual({
@@ -176,4 +177,5 @@ describe('resolveConfigPath', () => {
         expect(() => resolveConfigPath(['--config'], {})).toThrow(/路径/);
     });
 });
+
 

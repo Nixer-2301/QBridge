@@ -51,6 +51,8 @@ export interface BotConfig {
     splitParagraphs: boolean;
     /** 整段没有换行、又超过这个字数时按句号拆成多条；0 关闭。 */
     sentenceSplitAt: number;
+    /** 发给模型时给「正在问你」的那条消息加的标记；空字符串关闭。 */
+    triggerMarker: string;
     /** 一次回复最多拆成几条消息，超出的段落并回最后一条。 */
     maxReplySegments: number;
     /** 多条分片之间的间隔毫秒数。 */

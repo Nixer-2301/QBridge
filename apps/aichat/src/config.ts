@@ -284,6 +284,7 @@ function parseBot(raw: unknown): BotConfig {
             'maxReplyChars',
             'splitParagraphs',
             'sentenceSplitAt',
+            'triggerMarker',
             'maxReplySegments',
             'chunkDelayMs',
             'notifyOnError',
@@ -314,6 +315,7 @@ function parseBot(raw: unknown): BotConfig {
         maxReplyChars: readNumber(source, 'maxReplyChars', 'bot', 1_200, 50, 4_500),
         splitParagraphs: readBoolean(source, 'splitParagraphs', 'bot', true),
         sentenceSplitAt: readNumber(source, 'sentenceSplitAt', 'bot', 40, 0, 10_000),
+        triggerMarker: readString(source, 'triggerMarker', 'bot', '@你').trim(),
         maxReplySegments: readNumber(source, 'maxReplySegments', 'bot', 4, 1, 10),
         chunkDelayMs: readNumber(source, 'chunkDelayMs', 'bot', 400, 0, 10_000),
         notifyOnError: readBoolean(source, 'notifyOnError', 'bot', false),
@@ -641,6 +643,7 @@ export class ConfigStore {
         return this.configValue;
     }
 }
+
 
 
 

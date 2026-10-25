@@ -22,6 +22,7 @@
         "maxReplyChars": 1200,
         "splitParagraphs": true,
         "sentenceSplitAt": 40,
+        "triggerMarker": "@你",
         "maxReplySegments": 4,
         "chunkDelayMs": 400,
         "notifyOnError": false
@@ -78,6 +79,7 @@
         "level": "info"
     }
 }
+
 
 
 

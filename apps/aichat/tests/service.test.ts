@@ -149,7 +149,7 @@ describe('ChatService 触发规则', () => {
         const prompt = harness.model.calls[0] ?? [];
 
         expect(prompt[0]?.role).toBe('system');
-        expect(prompt.at(-1)).toEqual({ role: 'user', content: '小明: 在吗' });
+        expect(prompt.at(-1)).toEqual({ role: 'user', content: '@你 小明: 在吗' });
 
         expect(harness.sender.sent).toHaveLength(1);
         expect(harness.sender.sent[0]?.groupId).toBe(GROUP_ID);
@@ -321,7 +321,7 @@ describe('ChatService 上下文', () => {
 
         await harness.service.onGroupMessage(atSelf('你好'));
 
-        expect(harness.model.calls[0]?.at(-1)).toEqual({ role: 'user', content: '你好' });
+        expect(harness.model.calls[0]?.at(-1)).toEqual({ role: 'user', content: '@你 你好' });
     });
 });
 
@@ -613,7 +613,7 @@ describe('ChatService 图片输入', () => {
 
         const parts = last?.content as { type: string; text?: string; image_url?: { url: string } }[];
 
-        expect(parts[0]).toEqual({ type: 'text', text: '小明: [图片]这是什么' });
+        expect(parts[0]).toEqual({ type: 'text', text: '@你 小明: [图片]这是什么' });
         expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: 'https://gchat.qpic.cn/a.png?rkey=1' } });
         expect(harness.store.messages(GROUP_ID)[0]?.content).toBe('小明: [图片]这是什么');
     });
@@ -672,3 +672,56 @@ describe('ChatService 图片输入', () => {
 });
 
 
+
+
+describe('ChatService 只回答被 @ 的那条', () => {
+    it('只有当前提问带标记，别人的问题保持原样', async () => {
+        const harness = createHarness({}, { reply: '我是小助手' });
+
+        // 小红先问了个问题（没有 @ 机器人）
+        await harness.service.onGroupMessage(
+            event({
+                message_id: -70,
+                message: [{ type: 'text', data: { text: '今天几号？' } }],
+                sender: { user_id: 111, nickname: '小红', card: '' },
+            }),
+        );
+
+        // 小明随后 @ 了一个无关紧要的问题
+        await harness.service.onGroupMessage(atSelf('你是机器人吗', -71));
+
+        const prompt = harness.model.calls[0] ?? [];
+        const contents = prompt.map((item) => textOf(item));
+
+        expect(contents).toContain('小红: 今天几号？');
+        expect(contents.at(-1)).toBe('@你 小明: 你是机器人吗');
+        expect(contents.filter((content) => content.startsWith('@你'))).toHaveLength(1);
+    });
+
+    it('标记可以自定义', async () => {
+        const harness = createHarness({ bot: { triggerMarker: '>>' } });
+
+        await harness.service.onGroupMessage(atSelf('在吗', -72));
+
+        expect(harness.model.calls[0]?.at(-1)).toEqual({ role: 'user', content: '>> 小明: 在吗' });
+    });
+
+    it('置空可以关闭标记', async () => {
+        const harness = createHarness({ bot: { triggerMarker: '' } });
+
+        await harness.service.onGroupMessage(atSelf('在吗', -73));
+
+        expect(harness.model.calls[0]?.at(-1)).toEqual({ role: 'user', content: '小明: 在吗' });
+    });
+
+    it('系统提示词里的 {triggerMarker} 会被替换', async () => {
+        const harness = createHarness(
+            {},
+            { systemFor: () => '只回答以「{triggerMarker}」开头的消息' },
+        );
+
+        await harness.service.onGroupMessage(atSelf('在吗', -74));
+
+        expect(harness.model.calls[0]?.[0]?.content).toBe('只回答以「@你」开头的消息');
+    });
+});

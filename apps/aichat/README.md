@@ -189,6 +189,7 @@ npm run build && npm start
 | `owners` | `[]` | 可以用 `/reset`、`/reload` 的 QQ 号 |
 | `maxReplyChars` | `1200` | 单条消息最大字数，超长自动切分（上限 4500） |
 | `splitParagraphs` | `true` | 换行（单换行或空行）即分段，每段单独发一条消息 |
+| `triggerMarker` | `@你` | 发给模型时给当前提问加的前缀，帮模型分清「在问谁」；空字符串关闭 |
 | `sentenceSplitAt` | `40` | 整段没有换行且超过这个字数时按句号拆；`0` 关闭 |
 | `maxReplySegments` | `4` | 一次回复最多拆几条，超出的段落并回最后一条 |
 | `chunkDelayMs` | `400` | 分片之间的间隔，避免刷屏 |
@@ -268,7 +269,7 @@ prompts/
 
 解析顺序：`prompt.perGroup[群号]` → `prompts/groups/<群号>.md` → `prompts/system.md`。
 
-- 占位符：`{botName}`、`{groupId}`，在每次请求时替换。
+- 占位符：`{botName}`、`{groupId}`、`{triggerMarker}`，在每次请求时替换。`{triggerMarker}` 用于在提示词里说明「只回答带这个前缀的消息」。
 - 片段复用：`{{include:rules.md}}` 会把文件内容拼进来，最多 4 层；出现循环或指向 `prompts/` 之外的路径会直接报错并指出链路。
 - 文件读写：自动去掉 BOM、把 CRLF 归一成 LF；空提示词会报错，不会静默发一条空 system 消息。
 - 热更新：默认监听 `prompts/`（含 `groups/`），保存文件后约 0.3 秒自动重载，主提示词和群提示词都生效；保存到一半读到空文件会保留上一版并打 warn。`hotReload: false` 可关闭监听。
@@ -381,7 +382,7 @@ node tools/mock-onebot.mjs
 ### 3. 自动化测试
 
 ```bash
-npm test          # 206 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
+npm test          # 210 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
 npm run typecheck
 ```
 
@@ -531,6 +532,7 @@ ai-chat/
 - 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
 - 语音/视频/文件仍只以占位符进入上下文；图片已支持（见 `vision` 配置），但需要模型本身支持多模态。
 - 没有 Web 管理界面：改配置用文件 + `/reload`。
+
 
 
 
