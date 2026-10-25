@@ -19,10 +19,13 @@
         "mock": "node tools/mock-onebot.mjs"
     },
     "dependencies": {
+        "@resvg/resvg-wasm": "^2.6.2",
         "@snowluma/sdk": "^2.2.0"
     },
     "pnpm": {
-        "onlyBuiltDependencies": ["esbuild"]
+        "onlyBuiltDependencies": [
+            "esbuild"
+        ]
     },
     "devDependencies": {
         "@types/node": "^24.0.0",
@@ -32,4 +35,3 @@
         "ws": "^8.18.0"
     }
 }
-

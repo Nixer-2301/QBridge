@@ -384,6 +384,25 @@ prompts/
 
 `level`：`debug` / `info` / `warn` / `error` / `silent`，默认 `info`。`debug` 会为**每条**群消息打一行「@=是/否 引用机器人=是/否 文本=… → 触发/忽略」，排查「为什么没回」时打开它，然后 `/reload` 或重启。
 
+## 🦌 鹿管足迹（打卡日历）
+
+群里发 **🦌** 就记一次，机器人回一张本月日历图（标题用群名片/昵称）：
+
+- **120 分钟内只能记一次**：重复发只会收到「注意身体哦，120分钟内只能记录一次（还剩 N 分钟）」；
+- **/deer**（或 /鹿）只看图，不计数；
+- 数据存在 `data/deer.db`，用 Node 内置的 `node:sqlite`，不需要单独装数据库；
+- 日历图用 SVG + resvg-wasm 渲染成 PNG（纯 wasm、无原生依赖，Windows/Linux 通用），
+  字体是 OFL 许可的 Noto Sans SC，放在 `assets/fonts/`。
+
+```jsonc
+"deer": {
+    "enabled": true,
+    "emoji": "🦌",           // 触发字符
+    "cooldownMinutes": 120,  // 冷却分钟
+    "groupIds": []           // 空数组 = 所有群
+}
+```
+
 ## 管理命令
 
 在群里 `@机器人` 后发送（只有 `bot.owners` 里的账号有效）：

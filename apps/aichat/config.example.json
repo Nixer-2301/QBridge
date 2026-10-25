@@ -98,6 +98,12 @@
             }
         ]
     },
+    "deer": {
+        "enabled": true,
+        "emoji": "🦌",
+        "cooldownMinutes": 120,
+        "groupIds": []
+    },
     "logging": {
         "level": "info"
     }

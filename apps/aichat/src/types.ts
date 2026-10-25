@@ -159,6 +159,16 @@ export interface AutoReplyConfig {
     rules: AutoReplyRuleConfig[];
 }
 
+export interface DeerConfig {
+    enabled: boolean;
+    /** 触发记录的字符，默认 🦌 */
+    emoji: string;
+    /** 冷却分钟数，默认 120 */
+    cooldownMinutes: number;
+    /** 生效群；空数组表示所有群 */
+    groupIds: number[];
+}
+
 export interface AppConfig {
     onebot: OneBotConfig;
     bot: BotConfig;
@@ -168,6 +178,7 @@ export interface AppConfig {
     vision: VisionConfig;
     github: GithubConfig;
     autoReplies: AutoReplyConfig;
+    deer: DeerConfig;
     logging: { level: LogLevel };
 }
 
@@ -182,6 +193,7 @@ export interface ChatMessage {
     /** 纯文本，或 OpenAI 兼容的多模态分段（文本 + 图片）。 */
     content: string | ContentPart[];
 }
+
 
 
 

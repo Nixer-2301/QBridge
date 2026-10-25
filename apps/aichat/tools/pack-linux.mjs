@@ -124,10 +124,12 @@ async function main() {
 
     // app/：dist + 生产依赖（只有一个纯 JS SDK，无原生模块）
     copyDir(path.join(APP_DIR, 'dist'), path.join(staging, 'app', 'dist'));
-    copyDir(
-        path.join(APP_DIR, 'node_modules', '@snowluma', 'sdk'),
-        path.join(staging, 'app', 'node_modules', '@snowluma', 'sdk'),
-    );
+    for (const dependency of ['@snowluma/sdk', '@resvg/resvg-wasm']) {
+        copyDir(
+            path.join(APP_DIR, 'node_modules', ...dependency.split('/')),
+            path.join(staging, 'app', 'node_modules', ...dependency.split('/')),
+        );
+    }
 
     fs.writeFileSync(
         path.join(staging, 'app', 'package.json'),
@@ -138,7 +140,7 @@ async function main() {
                 private: true,
                 type: 'module',
                 engines: { node: '>=22.6.0' },
-                dependencies: { '@snowluma/sdk': '2.2.0' },
+                dependencies: { '@snowluma/sdk': '2.2.0', '@resvg/resvg-wasm': '2.6.2' },
             },
             null,
             4,
@@ -149,6 +151,8 @@ async function main() {
     await prepareNodeRuntime();
 
     copyDir(path.join(APP_DIR, 'prompts'), path.join(staging, 'prompts'));
+    // 字体用于 🦌 日历卡片渲染（OFL 许可，见 assets/fonts）
+    copyDir(path.join(APP_DIR, 'assets'), path.join(staging, 'assets'));
     fs.mkdirSync(path.join(staging, 'config'), { recursive: true });
     fs.copyFileSync(
         path.join(APP_DIR, 'config.example.json'),

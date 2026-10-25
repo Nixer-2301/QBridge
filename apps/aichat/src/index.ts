@@ -2,6 +2,9 @@ import path from 'node:path';
 import { showSplash } from './banner.ts';
 import { formatPreflight, runPreflight } from './check.ts';
 import { CooldownStore } from './chat/cooldowns.ts';
+import { resolveFontPath } from './deer/card.ts';
+import { DeerStore } from './deer/store.ts';
+import { DeerTracker } from './deer/tracker.ts';
 import { FaceStore } from './chat/faces.ts';
 import { ChatService, SenderSlot } from './chat/service.ts';
 import { ConfigStore, resolveConfigPath } from './config.ts';
@@ -154,6 +157,13 @@ async function main(): Promise<void> {
     const faces = new FaceStore(path.resolve('data/faces.json'), logger.child('faces'));
     logger.info(`表情缓存：${faces.size} 个`, faces.list().slice(0, 5).join('、'));
 
+    if (settings.deer.enabled) {
+        logger.info(
+            `🦌 记录：发 ${settings.deer.emoji} 记一次，冷却 ${settings.deer.cooldownMinutes} 分钟`,
+            `群=${settings.deer.groupIds.length > 0 ? settings.deer.groupIds.join(',') : '全部'} 数据库=data/deer.db`,
+        );
+    }
+
     for (const rule of settings.autoReplies.rules) {
         logger.info(
             `自动表情规则：用户 ${rule.userIds.join(',')} → ${
@@ -165,10 +175,18 @@ async function main(): Promise<void> {
         );
     }
 
-    const cooldowns = new CooldownStore(path.resolve('data/auto-replies.json'), logger.child('cooldown'));
-
     const stats = { events: 0, lastReply: '—' };
     const sender = new SenderSlot();
+    const cooldowns = new CooldownStore(path.resolve('data/auto-replies.json'), logger.child('cooldown'));
+    const deerStore = new DeerStore(path.resolve('data/deer.db'), logger.child('deer'));
+    const deer = new DeerTracker({
+        config: () => config.value.deer,
+        store: deerStore,
+        sender,
+        logger: logger.child('deer'),
+        fontPath: resolveFontPath(process.cwd()),
+    });
+
     const service = new ChatService({
         config,
         store,
@@ -177,6 +195,7 @@ async function main(): Promise<void> {
         prompts,
         faces,
         cooldowns,
+        deer,
         logger: logger.child('chat'),
         onActivity: (activity) => {
             if (activity.type === 'trigger') {
@@ -197,7 +216,8 @@ async function main(): Promise<void> {
     });
 
     const startedAt = Date.now();
-    const account = bot.nickname        ? `${bot.nickname}(${bot.selfId ?? '?'})`
+    const account = bot.nickname
+        ? `${bot.nickname}(${bot.selfId ?? '?'})`
         : bot.selfId !== undefined
           ? String(bot.selfId)
           : '未连接';
@@ -251,6 +271,7 @@ async function main(): Promise<void> {
         github.stop();
         bot.stop();
         prompts.close();
+        deerStore.close();
         tui?.stop();
         logHandle?.stream.end();
 

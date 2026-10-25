@@ -4,6 +4,7 @@ import { buildAutoReplySegments, cooldownKey, matchAutoReply, pickFace } from '.
 import type { CooldownLookup } from './cooldowns.ts';
 import { splitReply } from './chunk.ts';
 import type { FaceStore } from './faces.ts';
+import type { DeerHandler } from '../deer/tracker.ts';
 import { buildImageParts } from './vision.ts';
 import type { ConfigStore } from '../config.ts';
 import type { Logger } from '../logger.ts';
@@ -64,6 +65,8 @@ export interface ChatServiceOptions {
     faces?: FaceStore;
     /** 自动表情冷却（可持久化，避免重启后立刻又发） */
     cooldowns?: CooldownLookup;
+    /** 🦌 记录处理器（带图片卡片），命中后不再走模型 */
+    deer?: DeerHandler;
     /** 注入随机数，便于测试 probability */
     random?: () => number;
     sleep?: (ms: number) => Promise<void>;
@@ -180,6 +183,10 @@ export class ChatService {
         }
 
         if (parsed.text.length === 0) {
+            return;
+        }
+
+        if (this.options.deer && (await this.options.deer.handle(parsed))) {
             return;
         }
 

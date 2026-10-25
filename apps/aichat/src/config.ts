@@ -4,6 +4,7 @@ import type {
     AppConfig,
     AutoReplyConfig,
     AutoReplyRuleConfig,
+    DeerConfig,
     BotConfig,
     ContextConfig,
     GithubConfig,
@@ -524,6 +525,24 @@ function parseAutoReplies(raw: unknown): AutoReplyConfig {
     };
 }
 
+function parseDeer(raw: unknown): DeerConfig {
+    const source = readObject(raw, 'deer');
+    assertKeys(source, ['enabled', 'emoji', 'cooldownMinutes', 'groupIds'], 'deer');
+
+    const emoji = readString(source, 'emoji', 'deer', '🦌').trim();
+
+    if (emoji.length === 0) {
+        throw new ConfigError('deer.emoji 不能为空');
+    }
+
+    return {
+        enabled: readBoolean(source, 'enabled', 'deer', false),
+        emoji,
+        cooldownMinutes: readNumber(source, 'cooldownMinutes', 'deer', 120, 1, 10_080),
+        groupIds: readPositiveIntArray(source, 'groupIds', 'deer'),
+    };
+}
+
 function parseVision(raw: unknown): VisionConfig {    const source = readObject(raw, 'vision');
     assertKeys(source, ['enabled', 'maxImages', 'maxBytes'], 'vision');
 
@@ -648,7 +667,7 @@ export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.
     const root = readObject(expanded, 'config');
     assertKeys(
         root,
-        ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'github', 'autoReplies', 'logging'],
+        ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'github', 'autoReplies', 'deer', 'logging'],
         'config',
     );
 
@@ -670,6 +689,7 @@ export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.
         vision: parseVision(root['vision']),
         github: parseGithub(root['github']),
         autoReplies: parseAutoReplies(root['autoReplies']),
+        deer: parseDeer(root['deer']),
         logging: { level },
     };
 }
