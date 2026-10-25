@@ -1,0 +1,30 @@
+[Unit]
+Description=QBridge AI Chat (QQ group chatbot)
+Documentation=https://github.com/Nixer-2301/QBridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=qbridge
+Group=qbridge
+WorkingDirectory=/opt/qbridge-aichat
+# 密钥从 .env 读取（chmod 600）
+EnvironmentFile=/opt/qbridge-aichat/.env
+# 用 journald 收日志，避免 logs/ 无限增长；需要文件日志就删掉这一行。
+Environment=QB_LOG_FILE=off
+ExecStart=/opt/qbridge-aichat/runtime/node/bin/node /opt/qbridge-aichat/app/dist/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# 基础加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/qbridge-aichat/logs
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { showSplash } from './banner.ts';
+import { formatPreflight, runPreflight } from './check.ts';
 import { ChatService, SenderSlot } from './chat/service.ts';
 import { ConfigStore, resolveConfigPath } from './config.ts';
 import { loadEnvFile } from './env.ts';
@@ -37,6 +38,22 @@ async function main(): Promise<void> {
     const envLoaded = loadEnvFile(path.resolve('.env'));
     const configPath = resolveConfigPath(argv);
     const config = ConfigStore.load(configPath);
+
+    if (argv.includes('--check')) {
+        const checkLogger = createLogger('aichat', () => config.value.logging.level);
+        const items = await runPreflight({
+            config,
+            configPath,
+            baseDir: process.cwd(),
+            logger: checkLogger,
+        });
+        const { text, ok } = formatPreflight(items);
+
+        console.log(`\nQBridge AI Chat 预检\n${text}\n`);
+        process.exitCode = ok ? 0 : 1;
+
+        return;
+    }
 
     // 日志文件：默认 logs/ 下按时间戳命名；QB_LOG_FILE=off 关闭。
     const logSetting = (process.env['QB_LOG_FILE'] ?? 'logs').trim();

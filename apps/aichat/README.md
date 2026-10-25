@@ -338,11 +338,45 @@ node tools/mock-onebot.mjs
 ### 3. 自动化测试
 
 ```bash
-npm test          # 182 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
+npm test          # 188 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
 npm run typecheck
 ```
 
 ## 部署
+
+### Linux 离线包（推荐：目标机不需要装 Node）
+
+```bash
+npm run pack:linux            # 产出 build/qbridge-aichat-<版本>-linux-x64.{zip,tar.gz,sha256}
+```
+
+包内自带 Node 24（linux-x64）、编译好的 `app/dist`、生产依赖、`prompts/`、systemd 单元和安装脚本：
+
+```
+qbridge-aichat-<版本>-linux-x64/
+├─ start.sh                  # bash start.sh / bash start.sh --check
+├─ runtime/node/bin/node     # 自带运行时
+├─ app/{dist,node_modules}
+├─ config/config.example.json
+├─ prompts/
+├─ deploy/{install-service.sh,qbridge-aichat.service,README-deploy.md}
+└─ VERSION
+```
+
+服务器上三步：
+
+```bash
+unzip qbridge-aichat-*-linux-x64.zip && cd qbridge-aichat-*-linux-x64
+cp config/config.example.json config/config.json && cp .env.example .env && chmod 600 .env
+bash start.sh --check          # 配置 / 提示词 / OneBot / 模型 / 图片 五项预检
+bash start.sh                  # 前台跑；确认没问题后 sudo bash deploy/install-service.sh
+```
+
+详细步骤、跨机网络（QBridge 在 Windows、访问 3001 的隧道做法）、升级与排查见
+[`deploy/linux/README-deploy.md`](deploy/linux/README-deploy.md)。
+
+> QQ 登录仍然发生在 QBridge 那一侧（Windows + QQ 客户端）。本包只跑回复后端，
+> 通过 `ws://<Windows IP>:3001/` 连过去。
 
 ### PM2
 
@@ -402,6 +436,7 @@ ai-chat/
   logs/                 运行日志（bot-<时间戳>.log，已被 git 忽略）
   src/
     index.ts            启动入口：读配置、装配、连 QQ、优雅退出
+    check.ts            --check 预检：配置/提示词/OneBot/模型/图片
     banner.ts           启动横幅（z.py 的 Node 移植，TUI 头部）
     banner-art.ts       横幅字符画（由 tools/banner/z.py 生成）
     log-sink.ts         终端 + 文件双写日志
@@ -429,10 +464,14 @@ ai-chat/
       client.ts         OpenAI 兼容 /chat/completions 客户端（超时/重试）
       tokens.ts         token 估算
   tests/                单元测试 + 真实 WebSocket 链路测试
+  deploy/linux/         Linux 离线包模板：start.sh / systemd 单元 / 安装脚本 / 部署文档
   tools/
     smoke.mjs           离线端到端自检
     mock-onebot.mjs     交互式假 OneBot 服务端
+    pack-linux.mjs      打 Linux 离线包（自带 Node，产出 zip/tar.gz/sha256）
+    lib/tar-modes.mjs   tar 权限修正（Windows bsdtar 写不出 +x）
     banner/z.py         CLI 横幅的 Python 原稿（字形与配色基准）
+  build/                打包产物（已 git 忽略）
 ```
 
 ## 安全与合规
@@ -447,6 +486,7 @@ ai-chat/
 - 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
 - 语音/视频/文件仍只以占位符进入上下文；图片已支持（见 `vision` 配置），但需要模型本身支持多模态。
 - 没有 Web 管理界面：改配置用文件 + `/reload`。
+
 
 
 
