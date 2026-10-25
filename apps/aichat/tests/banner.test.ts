@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hueFor, renderFrame, showSplash, SPLASH_ART, toRgb } from '../src/banner.ts';
+import { fitSplash, hueFor, renderFrame, showSplash, SPLASH_ART, toRgb } from '../src/banner.ts';
 
 const ANSI = /\u001b\[/;
 
@@ -129,4 +129,35 @@ describe('横幅配色', () => {
     });
 });
 
+
+
+describe('横幅自适应宽度', () => {
+    it('行数恒为 6，宽度随终端变宽', () => {
+        const narrow = fitSplash(80);
+        const wide = fitSplash(140);
+
+        expect(narrow).toHaveLength(6);
+        expect(wide).toHaveLength(6);
+
+        const widthOf = (lines: string[]) => Math.max(...lines.map((line) => line.length));
+
+        expect(widthOf(narrow)).toBeLessThanOrEqual(78);
+        expect(widthOf(wide)).toBeGreaterThan(widthOf(narrow) + 20);
+    });
+
+    it('宽度不够时收缩字间距，不会超出终端', () => {
+        for (const cols of [60, 70, 80, 100, 160]) {
+            const width = Math.max(...fitSplash(cols).map((line) => line.length));
+
+            expect(width).toBeLessThanOrEqual(Math.max(40, cols - 2));
+        }
+    });
+
+    it('字形保持不变（仍是 block 大字）', () => {
+        const art = fitSplash(120).join('\n');
+
+        expect(art).toContain('█████');
+        expect(art).toContain('╔═══');
+    });
+});
 

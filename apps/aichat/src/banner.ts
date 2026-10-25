@@ -2,9 +2,39 @@
  * 启动横幅：把 z.py 里的「Q Bridge」slant 字 + 橙黄波浪动画移植到 Node。
  * 只做装饰，不影响日志输出；`QB_NO_SPLASH=1` 或 `--no-splash` 可关闭。
  */
-import { SPLASH_ART_LINES } from './banner-art.ts';
+import { SPLASH_GLYPHS } from './banner-art.ts';
 
-export const SPLASH_ART: readonly string[] = SPLASH_ART_LINES;
+/** 按字间距把逐字字形拼成整行；高度固定（6 行），只改宽度。 */
+export function composeSplash(gap: number): string[] {
+    const height = Math.max(...SPLASH_GLYPHS.map((glyph) => glyph.length));
+    const spacer = ' '.repeat(Math.max(0, Math.floor(gap)));
+
+    return Array.from({ length: height }, (_unused, row) =>
+        SPLASH_GLYPHS.map((glyph) => glyph[row] ?? '').join(spacer).replace(/\\s+$/, ''),
+    );
+}
+
+function linesWidth(lines: readonly string[]): number {
+    return lines.reduce((widest, line) => Math.max(widest, line.length), 0);
+}
+
+/** 在给定终端宽度内尽可能把横幅拉宽（字间距自适应，行数不变）。 */
+export function fitSplash(cols: number): string[] {
+    const budget = Math.max(40, Math.floor(cols) - 2);
+
+    for (let gap = 12; gap >= 0; gap -= 1) {
+        const lines = composeSplash(gap);
+
+        if (linesWidth(lines) <= budget) {
+            return lines;
+        }
+    }
+
+    return composeSplash(0);
+}
+
+/** 默认（80 列）下的横幅，供测试与纯文本模式使用。 */
+export const SPLASH_ART: readonly string[] = composeSplash(3);
 
 const RESET = '\u001b[0m';
 const HIDE_CURSOR = '\u001b[?25l';
@@ -129,4 +159,5 @@ export async function showSplash(options: SplashOptions = {}): Promise<void> {
 
     stream.write(`${CLEAR}${renderFrame(SPLASH_ART, frames, { color: true, width })}\n\n`);
 }
+
 

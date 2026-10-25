@@ -1,5 +1,5 @@
 import type { LogSink } from '../logger.ts';
-import { artFrame } from '../banner.ts';
+import { fitSplash, renderFrame, SPLASH_ART } from '../banner.ts';
 import {
     BOLD,
     CLEAR_LINE,
@@ -18,7 +18,6 @@ import {
     stripAnsi,
 } from './ansi.ts';
 import { bodyLineCapacity, computeLayout } from './layout.ts';
-import { SPLASH_ART } from '../banner.ts';
 import type { Layout } from './layout.ts';
 import { LogBuffer } from './log-buffer.ts';
 import type { LogLevelName } from './log-buffer.ts';
@@ -209,11 +208,10 @@ export class Tui {
             return [`${FG.orange}${BOLD} Q Bridge ${RESET}${DIM}· QQ 群 AI 助手${RESET}`, ''];
         }
 
-        const art = artFrame(this.frame, { color: true });
-        const artWidth = Math.max(...art.map((line) => displayWidth(stripAnsi(line))));
-        const pad = ' '.repeat(Math.max(0, Math.floor((cols - artWidth) / 2)));
+        // 高度固定 6 行，宽度按窗口自适应拉宽（字间距变大，字形不变）
+        const art = renderFrame(fitSplash(cols), this.frame, { color: true, width: cols }).split(String.fromCharCode(10));
 
-        return [...art.map((line) => pad + line), ''];
+        return [...art, ''];
     }
 
     /**
@@ -250,15 +248,8 @@ export class Tui {
 
         // 顶部：完整字符画或单行标题，固定不滚动。
         if (layout.fullHeader) {
-            const art = artFrame(this.frame, { color: true });
-            const artWidth = Math.max(...art.map((line) => displayWidth(stripAnsi(line))));
-            const pad = ' '.repeat(Math.max(0, Math.floor((cols - artWidth) / 2)));
-
-            for (const artLine of art) {
-                lines.push(pad + artLine);
-            }
-
-            lines.push('');
+            // 高度固定 6 行，宽度按窗口自适应拉宽（字间距变大，字形不变）。
+            lines.push(...this.headerLines(cols, layout));
         } else {
             lines.push(`${FG.orange}${BOLD} Q Bridge ${RESET}${DIM}· QQ 群 AI 助手${RESET}`);
             lines.push('');
@@ -450,6 +441,8 @@ export class Tui {
         return 1;
     }
 }
+
+
 
 
 
