@@ -51,6 +51,8 @@ export interface BotConfig {
     splitParagraphs: boolean;
     /** 整段没有换行、又超过这个字数时按句号拆成多条；0 关闭。 */
     sentenceSplitAt: number;
+    /** 引用（回复）机器人消息时也触发，不必 @。 */
+    triggerOnReply: boolean;
     /** 发给模型时给「正在问你」的那条消息加的标记；空字符串关闭。 */
     triggerMarker: string;
     /** 一次回复最多拆成几条消息，超出的段落并回最后一条。 */
@@ -153,5 +155,6 @@ export interface ChatMessage {
     /** 纯文本，或 OpenAI 兼容的多模态分段（文本 + 图片）。 */
     content: string | ContentPart[];
 }
+
 
 

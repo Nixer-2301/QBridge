@@ -72,7 +72,9 @@ function createHarness(
         sent,
         sendGroupMessage: async (groupId, message) => {
             sent.push({ groupId, message });
-            return {};
+
+            // 模拟 OneBot 返回的 message_id，供「引用回复触发」使用。
+            return { message_id: 1_000 + sent.length - 1 };
         },
     };
 
@@ -723,5 +725,64 @@ describe('ChatService 只回答被 @ 的那条', () => {
         await harness.service.onGroupMessage(atSelf('在吗', -74));
 
         expect(harness.model.calls[0]?.[0]?.content).toBe('只回答以「@你」开头的消息');
+    });
+});
+
+
+describe('ChatService 引用回复触发', () => {
+    function replyToBot(targetId: number, text: string, messageId = -90, userId = 555) {
+        return event({
+            message_id: messageId,
+            user_id: userId,
+            message: [
+                { type: 'reply', data: { id: String(targetId) } },
+                { type: 'text', data: { text } },
+            ],
+            sender: { user_id: userId, nickname: '路人', card: '' },
+        });
+    }
+
+    it('引用机器人刚发的那条消息也会触发回复', async () => {
+        const harness = createHarness({}, { reply: '在的' });
+
+        // 先 @ 一次，机器人回复并记录自己的 message_id（假 sender 从 1000 开始）
+        await harness.service.onGroupMessage(atSelf('在吗', -88));
+        expect(harness.sender.sent).toHaveLength(1);
+
+        const botMessageId = 1_000;
+
+        // 路人引用机器人的回复，不带 @
+        await harness.service.onGroupMessage(replyToBot(botMessageId, '你刚才说啥'));
+
+        expect(harness.model.calls).toHaveLength(2);
+        expect(harness.sender.sent).toHaveLength(2);
+    });
+
+    it('引用别人（不是机器人）的消息不会触发', async () => {
+        const harness = createHarness({});
+
+        await harness.service.onGroupMessage(replyToBot(9_999, '别人说的话'));
+
+        expect(harness.model.calls).toHaveLength(0);
+    });
+
+    it('triggerOnReply=false 时引用也不触发', async () => {
+        const harness = createHarness({ bot: { triggerOnReply: false } }, { reply: '在的' });
+
+        await harness.service.onGroupMessage(atSelf('在吗', -88));
+        await harness.service.onGroupMessage(replyToBot(1_000, '你刚才说啥'));
+
+        expect(harness.model.calls).toHaveLength(1);
+    });
+});
+
+describe('ChatService 自检命令', () => {
+    it('/ping 直接回 pong，不调用模型', async () => {
+        const harness = createHarness();
+
+        await harness.service.onGroupMessage(atSelf('/ping', -95));
+
+        expect(harness.model.calls).toHaveLength(0);
+        expect(textsOf(harness.sender.sent[0]?.message ?? [])[0]).toContain('pong');
     });
 });

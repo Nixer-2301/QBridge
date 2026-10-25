@@ -62,7 +62,7 @@ export interface ChatServiceOptions {
 }
 
 const COMMAND_PATTERN = /^\/([a-z][a-z0-9_-]*)(?:\s+([\s\S]*))?$/i;
-const HELP_TEXT = ['可用命令：', '/reset 清空本群上下文（仅管理员）', '/reload 重新加载配置文件（仅管理员）'].join(
+const HELP_TEXT = ['可用命令：', '/ping 检查机器人是否在线', '/reset 清空本群上下文（仅管理员）', '/reload 重新加载配置文件（仅管理员）'].join(
     '\n',
 );
 
@@ -86,9 +86,13 @@ export function isGroupAllowed(groupId: number, groups: GroupsConfig): boolean {
     return true;
 }
 
-/** @ 或被唤醒词命中才回复；`requireAt: false` 时退化为「所有群消息都回复」。 */
-export function isTriggered(message: ParsedGroupMessage, trigger: TriggerConfig): boolean {
-    if (message.mentionedSelf) {
+/** @、引用回复机器人、或被唤醒词命中才回复；`requireAt: false` 时退化为「所有群消息都回复」。 */
+export function isTriggered(
+    message: ParsedGroupMessage,
+    trigger: TriggerConfig,
+    repliedToSelf = false,
+): boolean {
+    if (message.mentionedSelf || repliedToSelf) {
         return true;
     }
 
@@ -110,6 +114,8 @@ export class ChatService {
     private readonly queues = new Map<number, Promise<void>>();
     private readonly seenMessageKeys = new Set<string>();
     private readonly seenOrder: string[] = [];
+    /** 每个群最近发出去的消息 id，用来识别「引用回复机器人」的触发方式。 */
+    private readonly sentIds = new Map<number, number[]>();
 
     constructor(options: ChatServiceOptions) {
         this.options = options;
@@ -148,7 +154,16 @@ export class ChatService {
             return;
         }
 
-        const triggered = isTriggered(parsed, config.bot.trigger);
+        const repliedToSelf =
+            config.bot.triggerOnReply &&
+            parsed.replyToId !== undefined &&
+            this.isOwnMessage(parsed.groupId, parsed.replyToId);
+        const triggered = isTriggered(parsed, config.bot.trigger, repliedToSelf);
+
+        logger.debug(
+            `群消息 群=${parsed.groupId} 用户=${parsed.senderName}(${parsed.userId})`,
+            `@=${parsed.mentionedSelf ? '是' : '否'} 引用机器人=${repliedToSelf ? '是' : '否'} 文本=${parsed.text.slice(0, 40)} → ${triggered ? '触发' : '忽略'}`,
+        );
 
         if (triggered) {
             const handled = await this.handleCommand(parsed);
@@ -166,12 +181,12 @@ export class ChatService {
         }
 
         if (!triggered) {
-            logger.debug(`群 ${parsed.groupId} 消息未触发回复`, `from=${parsed.senderName}`);
             return;
         }
 
         logger.info(
             `收到触发消息 群=${parsed.groupId} 用户=${parsed.senderName}(${parsed.userId}) 长度=${parsed.text.length}`,
+            repliedToSelf && !parsed.mentionedSelf ? '（引用回复触发）' : '',
         );
         this.options.onActivity?.({ type: 'trigger', groupId: parsed.groupId });
 
@@ -234,7 +249,7 @@ export class ChatService {
 
                 out.push(segments.text(chunk));
 
-                await this.options.sender.sendGroupMessage(parsed.groupId, out);
+                await this.send(parsed.groupId, out);
 
                 if (index < chunks.length - 1 && config.bot.chunkDelayMs > 0) {
                     await this.sleep(config.bot.chunkDelayMs);
@@ -373,6 +388,11 @@ export class ChatService {
         const config = this.options.config.value;
         const isOwner = config.bot.owners.includes(parsed.userId);
 
+        if (name === 'ping') {
+            await this.sendText(parsed, `pong · 在线 · 群 ${parsed.groupId}`);
+            return true;
+        }
+
         if (name === 'help') {
             await this.sendText(parsed, HELP_TEXT);
             return true;
@@ -409,9 +429,31 @@ export class ChatService {
         return true;
     }
 
+    /** 统一出口：记下发出的 message_id，后续识别「引用回复机器人」用。 */
+    private async send(groupId: number, message: AnyMessageSegment[]): Promise<void> {
+        const result = await this.options.sender.sendGroupMessage(groupId, message);
+        const messageId = (result as { message_id?: unknown } | null | undefined)?.message_id;
+
+        if (typeof messageId === 'number') {
+            const ids = this.sentIds.get(groupId) ?? [];
+
+            ids.push(messageId);
+
+            if (ids.length > 100) {
+                ids.splice(0, ids.length - 100);
+            }
+
+            this.sentIds.set(groupId, ids);
+        }
+    }
+
+    private isOwnMessage(groupId: number, messageId: number): boolean {
+        return this.sentIds.get(groupId)?.includes(messageId) ?? false;
+    }
+
     private async sendText(parsed: ParsedGroupMessage, text: string): Promise<void> {
         try {
-            await this.options.sender.sendGroupMessage(parsed.groupId, [segments.text(text)]);
+            await this.send(parsed.groupId, [segments.text(text)]);
         } catch (error) {
             this.options.logger.error('发送消息失败', error);
         }
@@ -464,5 +506,8 @@ export class ChatService {
         });
     }
 }
+
+
+
 
 

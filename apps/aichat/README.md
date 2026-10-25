@@ -189,6 +189,7 @@ npm run build && npm start
 | `owners` | `[]` | 可以用 `/reset`、`/reload` 的 QQ 号 |
 | `maxReplyChars` | `1200` | 单条消息最大字数，超长自动切分（上限 4500） |
 | `splitParagraphs` | `true` | 换行（单换行或空行）即分段，每段单独发一条消息 |
+| `triggerOnReply` | `true` | 引用（回复）机器人的消息也触发，不必 @ |
 | `triggerMarker` | `@你` | 发给模型时给当前提问加的前缀，帮模型分清「在问谁」；空字符串关闭 |
 | `sentenceSplitAt` | `40` | 整段没有换行且超过这个字数时按句号拆；`0` 关闭 |
 | `maxReplySegments` | `4` | 一次回复最多拆几条，超出的段落并回最后一条 |
@@ -344,7 +345,7 @@ prompts/
 
 ### `logging`
 
-`level`：`debug` / `info` / `warn` / `error` / `silent`，默认 `info`。`debug` 会打印每条被忽略的消息和 token 用量。
+`level`：`debug` / `info` / `warn` / `error` / `silent`，默认 `info`。`debug` 会为**每条**群消息打一行「@=是/否 引用机器人=是/否 文本=… → 触发/忽略」，排查「为什么没回」时打开它，然后 `/reload` 或重启。
 
 ## 管理命令
 
@@ -354,6 +355,7 @@ prompts/
 | --- | --- |
 | `/reset` | 清空**本群**上下文 |
 | `/reload` | 重新读取 `config/config.json`（提示词、模型、触发规则等即时生效） |
+| `/ping` | 立即回 `pong · 在线`，用来验证「消息能否到达机器人」，不走模型 |
 | `/help` | 查看命令 |
 
 ## 不用 QQ 也能测
@@ -532,6 +534,7 @@ ai-chat/
 - 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
 - 语音/视频/文件仍只以占位符进入上下文；图片已支持（见 `vision` 配置），但需要模型本身支持多模态。
 - 没有 Web 管理界面：改配置用文件 + `/reload`。
+
 
 
 
