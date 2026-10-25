@@ -36,6 +36,7 @@ function createHarness(
         reloadPrompts?: () => void;
         chat?: ChatModel['chat'];
         faces?: FaceStore;
+        random?: () => number;
     } = {},
 ): Harness {
     const appConfig: AppConfig = parseConfig(overrides, {});
@@ -90,6 +91,7 @@ function createHarness(
             reload: options.reloadPrompts,
         },
         ...(options.faces ? { faces: options.faces } : {}),
+        ...(options.random ? { random: options.random } : {}),
         logger,
         sleep: async () => {},
     });
@@ -979,3 +981,102 @@ describe('ChatService 自动表情冷却持久化', () => {
         fsx.rmSync(dir, { recursive: true, force: true });
     });
 });
+
+describe('表情轮换', () => {
+    const pool = ['是钢卷', '吃芒果', '偷听'];
+
+    function store() {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qb-pool-'));
+        const s = new FaceStore(path.join(dir, 'faces.json'), logger);
+
+        s.remember([
+            { summary: '是钢卷', emojiId: 'a'.repeat(32), emojiPackageId: 1, key: 'k1', url: '' },
+            { summary: '吃芒果', emojiId: 'b'.repeat(32), emojiPackageId: 2, key: 'k2', url: '' },
+            { summary: '偷听', emojiId: 'c'.repeat(32), emojiPackageId: 3, key: 'k3', url: '' },
+        ]);
+
+        return s;
+    }
+
+    function rule(extra: Record<string, unknown> = {}) {
+        return {
+            enabled: true,
+            rules: [
+                {
+                    userIds: [1_609_403_959],
+                    groupIds: [GROUP_ID],
+                    faces: pool,
+                    cooldownSeconds: 0,
+                    ...extra,
+                },
+            ],
+        };
+    }
+
+    function msg(id: number) {
+        return event({
+            message_id: id,
+            user_id: 1_609_403_959,
+            message: [{ type: 'text', data: { text: '冲' } }],
+        });
+    }
+
+    it('连续两条会换一个表情', async () => {
+        const harness = createHarness({ autoReplies: rule() }, { faces: store() });
+
+        await harness.service.onGroupMessage(msg(-300));
+        await harness.service.onGroupMessage(msg(-301));
+
+        const ids = harness.sender.sent.map(
+            (item) => (item.message[0] as { data: { emoji_id: string } }).data.emoji_id,
+        );
+
+        expect(ids).toHaveLength(2);
+        expect(ids[0]).not.toBe(ids[1]);
+    });
+
+    it('关闭 avoidRepeat 后可以重复同一个', async () => {
+        // 固定随机数，验证「关掉 avoidRepeat 后不再避开上一个」
+        const harness = createHarness(
+            { autoReplies: rule({ avoidRepeat: false }) },
+            { faces: store(), random: () => 0 },
+        );
+
+        await harness.service.onGroupMessage(msg(-302));
+        await harness.service.onGroupMessage(msg(-303));
+
+        const ids = harness.sender.sent.map(
+            (item) => (item.message[0] as { data: { emoji_id: string } }).data.emoji_id,
+        );
+
+        expect(ids[0]).toBe(ids[1]);
+    });
+
+    it('池里只有学到的表情才会被选中', async () => {
+        const harness = createHarness(
+            {
+                autoReplies: rule({ faces: ['没学过的表情', '偷听'] }),
+            },
+            { faces: store() },
+        );
+
+        await harness.service.onGroupMessage(msg(-304));
+
+        expect(harness.sender.sent).toHaveLength(1);
+        expect(harness.sender.sent[0]?.message[0]).toMatchObject({
+            data: { emoji_id: 'c'.repeat(32) },
+        });
+    });
+
+    it('["*"] 表示使用全部已学表情', async () => {
+        const harness = createHarness({ autoReplies: rule({ faces: ['*'] }) }, { faces: store() });
+
+        await harness.service.onGroupMessage(msg(-305));
+        await harness.service.onGroupMessage(msg(-306));
+
+        expect(harness.sender.sent).toHaveLength(2);
+    });
+});
+
+
+

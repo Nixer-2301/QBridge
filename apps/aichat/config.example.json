@@ -85,14 +85,24 @@
                 "groupIds": [
                     628101497
                 ],
-                "face": "是钢卷",
-                "cooldownSeconds": 120
+                "faces": [
+                    "是钢卷",
+                    "吃芒果",
+                    "偷听",
+                    "冲冲冲",
+                    "摆烂",
+                    "凝视"
+                ],
+                "cooldownSeconds": 120,
+                "avoidRepeat": true
             }
         ]
-    },    "logging": {
+    },
+    "logging": {
         "level": "info"
     }
 }
+
 
 
 

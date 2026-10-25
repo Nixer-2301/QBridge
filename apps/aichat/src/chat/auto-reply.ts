@@ -92,6 +92,46 @@ export function toImageSource(source: string, maxBytes: number): string | null {
     }
 }
 
+export interface FaceLookup {
+    get(summary: string): FaceInfo | undefined;
+    list(): string[];
+}
+
+/**
+ * 从表情池里随机挑一个「已经学到」的表情。
+ * - `["*"]` 表示使用全部已学表情；
+ * - 池子多于一个时避开上一次发过的，避免看起来像复读；
+ * - 都没学到就返回 undefined，由调用方决定降级。
+ */
+export function pickFace(
+    candidates: readonly string[],
+    store: FaceLookup | undefined,
+    lastUsed: string | undefined,
+    random: () => number = Math.random,
+): FaceInfo | undefined {
+    if (!store || candidates.length === 0) {
+        return undefined;
+    }
+
+    const names = candidates.includes('*') ? store.list() : candidates;
+    const available = names
+        .map((name) => store.get(name))
+        .filter((face): face is FaceInfo => face !== undefined);
+
+    if (available.length === 0) {
+        return undefined;
+    }
+
+    const withoutLast =
+        available.length > 1 && lastUsed !== undefined
+            ? available.filter((face) => face.summary !== lastUsed)
+            : available;
+    const pool = withoutLast.length > 0 ? withoutLast : available;
+    const index = Math.min(pool.length - 1, Math.max(0, Math.floor(random() * pool.length)));
+
+    return pool[index];
+}
+
 /**
  * 组装一条自动回复：优先发商城表情（需要先学到 emoji_id），其次图片，最后文字。
  * 都不可用时返回 null，由调用方决定是否提示。
@@ -101,7 +141,7 @@ export function buildAutoReplySegments(
     face: FaceInfo | undefined,
     options: { maxImageBytes: number; logger: Logger },
 ): AnyMessageSegment[] | null {
-    if (rule.face && face) {
+    if (face) {
         // QBridge 收到带 emoji_id 的 image 段会还原成真正的商城表情（见 element-codecs）。
         return [
             {
@@ -116,9 +156,11 @@ export function buildAutoReplySegments(
         ];
     }
 
-    if (rule.face && !face) {
+    const wanted = rule.faces ?? (rule.face ? [rule.face] : []);
+
+    if (wanted.length > 0) {
         options.logger.warn(
-            `还没学到表情「${rule.face}」，先让它被发一次（或配置 image 兜底）`,
+            `表情池里还没有可用的表情（${wanted.join('、')}），先让它们被发一次，或配置 image 兜底`,
             '收到该表情后会自动缓存 emoji_id',
         );
     }

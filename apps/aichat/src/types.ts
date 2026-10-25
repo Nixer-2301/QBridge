@@ -140,6 +140,10 @@ export interface AutoReplyRuleConfig {
     groupIds: number[];
     /** 商城表情的文字摘要，需要先「学到」 */
     face?: string;
+    /** 表情池：随机挑一个发；写 ["*"] 表示用所有已学到的表情 */
+    faces?: string[];
+    /** 是否避免连续发同一个（默认 true） */
+    avoidRepeat?: boolean;
     /** 兜底图片：本地路径 / http(s) / base64 */
     image?: string;
     /** 兜底文字 */

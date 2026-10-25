@@ -156,7 +156,11 @@ async function main(): Promise<void> {
 
     for (const rule of settings.autoReplies.rules) {
         logger.info(
-            `自动表情规则：用户 ${rule.userIds.join(',')} → ${rule.face ?? rule.image ?? rule.text ?? '?'}`,
+            `自动表情规则：用户 ${rule.userIds.join(',')} → ${
+                rule.faces
+                    ? `表情池(${rule.faces.length === 1 && rule.faces[0] === '*' ? '全部' : rule.faces.length}) ${rule.faces.join('、')}`
+                    : rule.face ?? rule.image ?? rule.text ?? '?'
+            }`,
             `群=${rule.groupIds.length > 0 ? rule.groupIds.join(',') : '全部'} 冷却=${rule.cooldownSeconds}s 概率=${rule.probability}`,
         );
     }

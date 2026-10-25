@@ -1,6 +1,6 @@
 import { message as segments } from '@snowluma/sdk';
 import type { AnyMessageSegment } from '@snowluma/sdk';
-import { buildAutoReplySegments, cooldownKey, matchAutoReply } from './auto-reply.ts';
+import { buildAutoReplySegments, cooldownKey, matchAutoReply, pickFace } from './auto-reply.ts';
 import type { CooldownLookup } from './cooldowns.ts';
 import { splitReply } from './chunk.ts';
 import type { FaceStore } from './faces.ts';
@@ -133,6 +133,8 @@ export class ChatService {
     private readonly sentIds = new Map<number, number[]>();
     /** 自动表情的冷却记录：规则索引:群号 → 上次发送时间（默认内存，可由 options 注入持久化实现） */
     private readonly autoCooldowns: CooldownLookup;
+    /** 每个「规则:群」上次发的表情名，用于轮换时避免连着发同一个 */
+    private readonly lastFaces = new Map<string, string>();
 
     constructor(options: ChatServiceOptions) {
         this.options = options;
@@ -247,7 +249,15 @@ export class ChatService {
             return;
         }
 
-        const face = match.rule.face ? this.options.faces?.get(match.rule.face) : undefined;
+        const key = cooldownKey(match.index, parsed.groupId);
+        const candidates = match.rule.faces ?? (match.rule.face ? [match.rule.face] : []);
+        const avoidRepeat = match.rule.avoidRepeat !== false;
+        const face = pickFace(
+            candidates,
+            this.options.faces,
+            avoidRepeat ? this.lastFaces.get(key) : undefined,
+            this.options.random,
+        );
         const segments = buildAutoReplySegments(match.rule, face, {
             maxImageBytes: config.vision.maxBytes,
             logger: this.options.logger,
@@ -259,7 +269,11 @@ export class ChatService {
 
         try {
             await this.send(parsed.groupId, segments);
-            this.autoCooldowns.set(cooldownKey(match.index, parsed.groupId), now);
+            this.autoCooldowns.set(key, now);
+
+            if (face) {
+                this.lastFaces.set(key, face.summary);
+            }
             this.options.logger.info(
                 `自动表情 群=${parsed.groupId} 用户=${parsed.senderName}(${parsed.userId})`,
                 match.rule.face ? `表情=${match.rule.face}` : `规则=${match.index}`,
@@ -610,6 +624,7 @@ export class ChatService {
         });
     }
 }
+
 
 
 

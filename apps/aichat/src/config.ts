@@ -432,7 +432,17 @@ function parseAutoReplyRule(raw: unknown, pathName: string): AutoReplyRuleConfig
     const source = readObject(raw, pathName);
     assertKeys(
         source,
-        ['userIds', 'groupIds', 'face', 'image', 'text', 'cooldownSeconds', 'probability'],
+        [
+            'userIds',
+            'groupIds',
+            'face',
+            'faces',
+            'image',
+            'text',
+            'cooldownSeconds',
+            'probability',
+            'avoidRepeat',
+        ],
         pathName,
     );
 
@@ -445,9 +455,25 @@ function parseAutoReplyRule(raw: unknown, pathName: string): AutoReplyRuleConfig
     const face = readString(source, 'face', pathName, '').trim();
     const image = readString(source, 'image', pathName, '').trim();
     const text = readString(source, 'text', pathName, '').trim();
+    const facesRaw = source['faces'];
+    let faces: string[] | undefined;
 
-    if (face.length === 0 && image.length === 0 && text.length === 0) {
-        throw new ConfigError(`${pathName} 至少要配置 face、image、text 之一`);
+    if (facesRaw !== undefined) {
+        if (!Array.isArray(facesRaw) || facesRaw.length === 0) {
+            throw new ConfigError(`${pathName}.faces 必须是非空数组，或用 ["*"] 表示所有已学表情`);
+        }
+
+        faces = facesRaw.map((item, index) => {
+            if (typeof item !== 'string' || item.trim().length === 0) {
+                throw new ConfigError(`${pathName}.faces[${index}] 必须是非空字符串`);
+            }
+
+            return item.trim();
+        });
+    }
+
+    if (face.length === 0 && !faces && image.length === 0 && text.length === 0) {
+        throw new ConfigError(`${pathName} 至少要配置 face、faces、image、text 之一`);
     }
 
     const rule: AutoReplyRuleConfig = {
@@ -459,6 +485,14 @@ function parseAutoReplyRule(raw: unknown, pathName: string): AutoReplyRuleConfig
 
     if (face.length > 0) {
         rule.face = face;
+    }
+
+    if (faces) {
+        rule.faces = faces;
+    }
+
+    if (source['avoidRepeat'] !== undefined) {
+        rule.avoidRepeat = readBoolean(source, 'avoidRepeat', pathName, true);
     }
 
     if (image.length > 0) {
