@@ -79,6 +79,16 @@ export function renderFrame(
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** 返回一帧彩色字符画（不做居中），供 TUI 的固定头部直接使用。 */
+export function artFrame(offset: number, options: { color?: boolean } = {}): string[] {
+    const width = SPLASH_ART.reduce((widest, line) => Math.max(widest, line.length), 0);
+
+    return renderFrame(SPLASH_ART, offset, {
+        color: options.color ?? true,
+        width,
+    }).split('\n');
+}
+
 /**
  * 播放启动动画并保留最后一帧；非 TTY / 关闭颜色时只打印静态横幅。
  * 结束后只在横幅下方继续输出日志，不会持续清屏。

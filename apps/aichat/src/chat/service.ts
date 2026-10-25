@@ -40,6 +40,13 @@ export class SenderSlot implements GroupSender {
     }
 }
 
+/** 供终端状态栏 / 指标收集用的事件，不包含消息正文。 */
+export interface ChatActivity {
+    type: 'trigger' | 'reply' | 'error';
+    groupId: number;
+    elapsedMs?: number;
+}
+
 export interface ChatServiceOptions {
     config: ConfigStore;
     store: ConversationStore;
@@ -47,6 +54,7 @@ export interface ChatServiceOptions {
     sender: GroupSender;
     logger: Logger;
     sleep?: (ms: number) => Promise<void>;
+    onActivity?: (activity: ChatActivity) => void;
 }
 
 const COMMAND_PATTERN = /^\/([a-z][a-z0-9_-]*)(?:\s+([\s\S]*))?$/i;
@@ -153,6 +161,7 @@ export class ChatService {
         logger.info(
             `收到触发消息 群=${parsed.groupId} 用户=${parsed.senderName}(${parsed.userId}) 长度=${parsed.text.length}`,
         );
+        this.options.onActivity?.({ type: 'trigger', groupId: parsed.groupId });
 
         // 在入队前拍下历史快照：同群排队时不会把后面到达的消息算进这一次提问。
         const history = this.options.store.messages(parsed.groupId);
@@ -206,10 +215,20 @@ export class ChatService {
             logger.info(
                 `回复完成 群=${parsed.groupId} 分片=${chunks.length} 字数=${result.text.length} 耗时=${Date.now() - startedAt}ms`,
             );
+            this.options.onActivity?.({
+                type: 'reply',
+                groupId: parsed.groupId,
+                elapsedMs: Date.now() - startedAt,
+            });
         } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
 
             logger.error(`回复失败 群=${parsed.groupId}`, error);
+            this.options.onActivity?.({
+                type: 'error',
+                groupId: parsed.groupId,
+                elapsedMs: Date.now() - startedAt,
+            });
 
             if (config.bot.notifyOnError) {
                 try {

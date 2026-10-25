@@ -8,8 +8,10 @@ import { createLogger } from './logger.ts';
 import { LlmClient } from './llm/client.ts';
 import { ConversationStore } from './memory/store.ts';
 import { startQQBot } from './qq/bot.ts';
+import { Tui } from './tui/tui.ts';
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1_000;
+const STATUS_INTERVAL_MS = 1_000;
 
 function maskSecret(secret: string): string {
     if (secret.length === 0) {
@@ -19,14 +21,19 @@ function maskSecret(secret: string): string {
     return secret.length <= 6 ? '***' : `${secret.slice(0, 3)}***${secret.slice(-2)}`;
 }
 
+function formatUptime(milliseconds: number): string {
+    const total = Math.max(0, Math.floor(milliseconds / 1_000));
+    const hours = Math.floor(total / 3_600);
+    const minutes = Math.floor((total % 3_600) / 60);
+    const seconds = total % 60;
+    const pad = (value: number) => String(value).padStart(2, '0');
+
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
 async function main(): Promise<void> {
     const argv = process.argv.slice(2);
     const envLoaded = loadEnvFile(path.resolve('.env'));
-
-    if (envLoaded.length > 0) {
-        console.log(`已从 .env 读取 ${envLoaded.length} 个环境变量：${envLoaded.join(', ')}`);
-    }
-
     const configPath = resolveConfigPath(argv);
     const config = ConfigStore.load(configPath);
 
@@ -36,19 +43,40 @@ async function main(): Promise<void> {
         logSetting.toLowerCase() === 'off'
             ? undefined
             : openLogFile(path.resolve(logSetting.length > 0 ? logSetting : 'logs'));
+
+    // 交互式终端用三段式 TUI；管道/CI 下退回纯文本（QB_PLAIN=1 或 --plain 强制纯文本）。
+    const useTui =
+        process.stdout.isTTY === true &&
+        process.env['QB_PLAIN'] !== '1' &&
+        !argv.includes('--plain');
+    let stopEverything: ((reason: string) => void) | undefined;
+    const tui = useTui
+        ? new Tui({
+              stream: process.stdout,
+              input: process.stdin,
+              onQuit: () => stopEverything?.('TUI 退出'),
+              animateFrames: argv.includes('--no-splash') || process.env['QB_NO_SPLASH'] === '1' ? 0 : 60,
+          })
+        : undefined;
     const logger = createLogger(
         'aichat',
         () => config.value.logging.level,
-        createLogSink(console, logHandle?.stream),
+        createLogSink(tui ? tui.sink : console, logHandle?.stream),
     );
 
-    if (argv.includes('--no-splash') || process.env['QB_NO_SPLASH'] === '1') {
+    if (tui) {
+        tui.start();
+    } else if (argv.includes('--no-splash') || process.env['QB_NO_SPLASH'] === '1') {
         logger.debug('已跳过启动动画');
     } else {
         await showSplash();
     }
 
     const settings = config.value;
+
+    if (envLoaded.length > 0) {
+        logger.info(`已从 .env 读取 ${envLoaded.length} 个环境变量：${envLoaded.join(', ')}`);
+    }
 
     logger.info(`配置文件：${configPath}`);
 
@@ -94,6 +122,7 @@ async function main(): Promise<void> {
         logger: logger.child('llm'),
     });
 
+    const stats = { events: 0, lastReply: '—' };
     const sender = new SenderSlot();
     const service = new ChatService({
         config,
@@ -101,6 +130,15 @@ async function main(): Promise<void> {
         llm,
         sender,
         logger: logger.child('chat'),
+        onActivity: (activity) => {
+            if (activity.type === 'trigger') {
+                stats.events += 1;
+            } else if (activity.type === 'reply') {
+                stats.lastReply = `群 ${activity.groupId} · ${((activity.elapsedMs ?? 0) / 1_000).toFixed(1)}s`;
+            } else {
+                stats.lastReply = `群 ${activity.groupId} · 失败`;
+            }
+        },
     });
 
     const bot = await startQQBot({
@@ -109,6 +147,30 @@ async function main(): Promise<void> {
         sender,
         logger: logger.child('qq'),
     });
+
+    const startedAt = Date.now();
+    const account = bot.nickname
+        ? `${bot.nickname}(${bot.selfId ?? '?'})`
+        : bot.selfId !== undefined
+          ? String(bot.selfId)
+          : '未连接';
+
+    const updateStatus = () => {
+        tui?.setStatus({
+            connected: bot.client.isConnected,
+            account,
+            model: config.value.llm.model,
+            groups: store.groupCount,
+            events: stats.events,
+            lastReply: stats.lastReply,
+            uptime: formatUptime(Date.now() - startedAt),
+            logPath: logHandle ? path.basename(logHandle.path) : 'off',
+        });
+    };
+
+    updateStatus();
+    const statusTimer = setInterval(updateStatus, STATUS_INTERVAL_MS);
+    statusTimer.unref();
 
     const sweepTimer = setInterval(() => {
         const removed = store.sweep();
@@ -120,19 +182,28 @@ async function main(): Promise<void> {
     sweepTimer.unref();
 
     let stopping = false;
-    const shutdown = (signal: string) => {
+    const shutdown = (reason: string) => {
         if (stopping) {
             return;
         }
 
         stopping = true;
-        logger.info(`收到 ${signal}，正在退出`);
+        logger.info(`正在退出（${reason}）`);
+        clearInterval(statusTimer);
         clearInterval(sweepTimer);
         bot.stop();
+        tui?.stop();
         logHandle?.stream.end();
+
+        if (tui) {
+            console.log(`已退出。日志：${logHandle ? logHandle.path : '未启用文件日志'}`);
+        }
+
         // 留一点时间让 close 帧和日志落盘。
         setTimeout(() => process.exit(0), 200).unref();
     };
+
+    stopEverything = shutdown;
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));

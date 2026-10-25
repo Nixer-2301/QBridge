@@ -7,6 +7,7 @@ import type { OneBotConfig } from '../types.ts';
 export interface QQBotHandle {
     client: SnowLumaWebSocketClient;
     selfId: number | undefined;
+    nickname: string | undefined;
     stop(): void;
 }
 
@@ -117,10 +118,12 @@ export async function startQQBot(options: {
     connected = true;
 
     let selfId: number | undefined;
+    let nickname: string | undefined;
 
     try {
         const login = await client.getLoginInfo();
         selfId = login.user_id;
+        nickname = login.nickname;
         logger.info(`已连接 QQ 账号 ${login.nickname}(${login.user_id})`);
     } catch (error) {
         logger.warn(
@@ -132,6 +135,7 @@ export async function startQQBot(options: {
     return {
         client,
         selfId,
+        nickname,
         stop() {
             closing = true;
             client.close(1_000, 'shutdown');
