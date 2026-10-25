@@ -22,6 +22,7 @@ describe('computeLayout', () => {
 
     it('窗口太矮或太窄时退化成单行标题', () => {
         expect(computeLayout(14, 80).fullHeader).toBe(false);
+        expect(computeLayout(15, 80).fullHeader).toBe(true);
         expect(computeLayout(30, 50).fullHeader).toBe(false);
         expect(computeLayout(30, 60).fullHeader).toBe(true);
     });
@@ -58,4 +59,5 @@ describe('computeLayout', () => {
         expect(bodyLineCapacity(layout)).toBe(layout.body.height - 1);
     });
 });
+
 

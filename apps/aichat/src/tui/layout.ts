@@ -13,6 +13,8 @@ export interface Layout {
 }
 
 export const MIN_FULL_HEADER_ROWS = 15;
+/** 完整横幅所需的额外行数：空行 + 状态框 + 最少日志行 */
+export const HEADER_RESERVED_ROWS = 9;
 export const MIN_FULL_HEADER_COLS = 60;
 export const FOOTER_HEIGHT = 5;
 export const COMPACT_FOOTER_HEIGHT = 3;
@@ -24,7 +26,7 @@ export const ART_ROWS = 6;
  * 窗口过矮时横幅退化成一行、状态框退化成一行，日志区至少保留 3 行。
  */
 export function computeLayout(rows: number, cols = 80, artRows: number = ART_ROWS): Layout {
-    const fullHeader = rows >= MIN_FULL_HEADER_ROWS && cols >= MIN_FULL_HEADER_COLS;
+    const fullHeader = rows >= artRows + HEADER_RESERVED_ROWS && cols >= MIN_FULL_HEADER_COLS;
     const headerHeight = fullHeader ? artRows + 1 : 2;
     const footerHeight =
         rows - headerHeight - MIN_BODY_ROWS >= FOOTER_HEIGHT ? FOOTER_HEIGHT : COMPACT_FOOTER_HEIGHT;
@@ -42,4 +44,5 @@ export function computeLayout(rows: number, cols = 80, artRows: number = ART_ROW
 export function bodyLineCapacity(layout: Layout): number {
     return Math.max(0, layout.body.height - 1);
 }
+
 

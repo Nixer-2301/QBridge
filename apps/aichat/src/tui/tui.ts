@@ -18,6 +18,7 @@ import {
     stripAnsi,
 } from './ansi.ts';
 import { bodyLineCapacity, computeLayout } from './layout.ts';
+import { SPLASH_ART } from '../banner.ts';
 import type { Layout } from './layout.ts';
 import { LogBuffer } from './log-buffer.ts';
 import type { LogLevelName } from './log-buffer.ts';
@@ -225,7 +226,7 @@ export class Tui {
         }
 
         const { rows, cols } = this.size();
-        const layout = computeLayout(rows, cols);
+        const layout = computeLayout(rows, cols, SPLASH_ART.length);
         const lines = this.headerLines(cols, layout);
         let output = '';
 
@@ -242,7 +243,7 @@ export class Tui {
         }
 
         const { rows, cols } = this.size();
-        const layout = computeLayout(rows, cols);
+        const layout = computeLayout(rows, cols, SPLASH_ART.length);
         const capacity = bodyLineCapacity(layout);
         const view = this.logs.window(capacity);
         const lines: string[] = [];
@@ -358,7 +359,7 @@ export class Tui {
         }
 
         const { rows, cols } = this.size();
-        const capacity = bodyLineCapacity(computeLayout(rows, cols));
+        const capacity = bodyLineCapacity(computeLayout(rows, cols, SPLASH_ART.length));
 
         const mouse = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])/.exec(input);
 
@@ -449,6 +450,7 @@ export class Tui {
         return 1;
     }
 }
+
 
 
 

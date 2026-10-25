@@ -67,7 +67,7 @@ describe('Tui', () => {
         const plain = stripAnsi(stream.output);
 
         expect(stream.output.startsWith(`${ESC}?1049h`)).toBe(true);
-        expect(plain).toContain('____');
+        expect(plain).toContain('█████');
         expect(plain).toContain('已连接');
         expect(plain).toContain('Nixer(3858972062)');
         expect(plain).toContain('deepseek-chat');
@@ -158,7 +158,7 @@ describe('Tui', () => {
 
         const plain = stripAnsi(stream.output);
 
-        expect(plain).not.toContain('____');
+        expect(plain).not.toContain('█████');
         expect(plain).toContain('Q Bridge');
         expect(plain).toContain('已连接');
     });
@@ -203,3 +203,4 @@ describe('Tui 横幅动画', () => {
         tui.stop();
     });
 });
+

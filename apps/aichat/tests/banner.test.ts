@@ -26,10 +26,11 @@ function createStream(isTTY: boolean, columns = 80) {
 }
 
 describe('启动横幅', () => {
-    it('横幅内容是 6 行 slant 字', () => {
+    it('横幅是 6 行 block 大字（ansi_shadow）', () => {
         expect(SPLASH_ART).toHaveLength(6);
-        expect(SPLASH_ART.join('\n')).toContain('____');
-        expect(SPLASH_ART.at(-1)?.trim()).toBe('/____/');
+        expect(SPLASH_ART.join('')).toContain('█████');
+        expect(SPLASH_ART.join('')).toContain('╔═══');
+        expect(SPLASH_ART.at(-1)?.trim().endsWith('╝')).toBe(true);
     });
 
     it('每个字符的色相落在 30° 到 70° 之间（橙 → 黄）', () => {
@@ -64,7 +65,7 @@ describe('启动横幅', () => {
 
         expect(stream.output).not.toMatch(/\u001b\[\?25l/);
         expect(stream.output).not.toMatch(/\u001b\[H/);
-        expect(plain(stream.output)).toContain('____');
+        expect(plain(stream.output)).toContain('█████');
     });
 
     it('TTY 下播放动画并清理光标状态', async () => {
@@ -85,7 +86,7 @@ describe('启动横幅', () => {
         await showSplash({ stream, animate: false, color: true });
 
         expect(stream.output).not.toMatch(/\u001b\[\?25l/);
-        expect(plain(stream.output)).toContain('____');
+        expect(plain(stream.output)).toContain('█████');
     });
 
     it('NO_COLOR 环境下退化为纯文本横幅', async () => {
@@ -127,4 +128,5 @@ describe('横幅配色', () => {
         }
     });
 });
+
 
