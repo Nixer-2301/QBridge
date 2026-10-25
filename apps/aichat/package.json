@@ -1,0 +1,33 @@
+{
+    "name": "qbridge-ai-chat",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "QQ 群 AI 聊天机器人后端：经 QBridge 的 OneBot v11 接口接入，仅群聊、@ 触发、多轮上下文。",
+    "engines": {
+        "node": ">=22.6.0"
+    },
+    "scripts": {
+        "start": "node dist/index.js",
+        "dev": "node --watch src/index.ts",
+        "build": "tsc -p tsconfig.json",
+        "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "smoke": "node tools/smoke.mjs",
+        "mock": "node tools/mock-onebot.mjs"
+    },
+    "dependencies": {
+        "@snowluma/sdk": "^2.2.0"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": ["esbuild"]
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.0",
+        "@types/ws": "^8.5.12",
+        "typescript": "^5.9.2",
+        "vitest": "^3.2.4",
+        "ws": "^8.18.0"
+    }
+}

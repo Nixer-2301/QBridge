@@ -1,0 +1,350 @@
+# QBridge AI Chat
+
+QQ 群 AI 聊天机器人**回复后端**。QQ 接入交给 [QBridge](https://github.com/Nixer-2301/QBridge)（SnowLuma 的 fork，负责 QQ 客户端 ↔ OneBot v11），本项目只做聊天逻辑：收群消息 → 组织上下文 → 调大模型 → 回群。
+
+> 只处理**群聊**。私聊消息一律忽略。
+> 默认只有**被 @** 才回复；其余群消息只用来补上下文。
+
+```
+QQ 客户端 ──Hook──> QBridge ──OneBot v11 WS──> 本项目 ──HTTPS──> 大模型 (OpenAI 兼容)
+   (登录态)          (ws://127.0.0.1:3001)        (上下文/提示词/切分)      (DeepSeek / OpenAI / Qwen / Ollama…)
+```
+
+## 功能
+
+- **仅群聊**：私聊事件直接丢弃；可按群号做白/黑名单。
+- **@ 触发**：只有 @ 机器人才回复，可选附加唤醒词，也可配置成「所有群消息都回」。
+- **多轮上下文**：每个群一份共享窗口（多人聊天），默认 **20 条 / 20000 tokens** 双上限，超出按「提问 + 回答」成对丢弃。
+- **发言人前缀**：上下文写成 `昵称: 内容`，模型知道群里谁在说话；也可关闭。
+- **系统提示词**：全局一份 + 按群覆盖，支持 `{botName}`、`{groupId}` 占位符，改完 `/reload` 生效，不用重启。
+- **像人一样回复**：引用触发消息、按 QQ 长度限制自动切分长回复、同群串行保证顺序、失败自动重试。
+- **管理命令**：`/reset` 清空本群上下文、`/reload` 热重载配置（仅 `bot.owners` 里列出的账号可用）。
+- **可观测**：结构化日志记录连接、触发、耗时、失败原因；不打印密钥。
+- **零框架依赖**：只用 `@snowluma/sdk`（官方 OneBot 客户端），其余是 Node 内置能力。
+
+## 前置条件
+
+1. **QBridge 已经在跑，并且 QQ 已登录**（QBridge 负责 QQ 客户端接入，本项目不处理登录）。
+2. QBridge 里该账号的 **OneBot 正向 WebSocket** 已开启：默认 `ws://127.0.0.1:3001/`，`message_format = array`。
+3. 拿到该账号的 **accessToken**：QBridge 运行目录下 `config/onebot_<QQ号>.json` 里的 `networks.wsServers[0].accessToken`（WebUI 的 OneBot 配置页也能看到）。
+4. **Node.js ≥ 22.6**（建议 24.x，`node --version` 自查）。
+
+> 如果 QBridge 里把该账号的 wsServers 的 `accessToken` 清空了，本项目 `onebot.accessToken` 也可以留空。
+
+## 快速开始
+
+```bash
+cd ai-chat
+pnpm install            # 或 npm install
+npm run build
+
+mkdir config            # Windows: md config
+# 复制配置模板
+cp config.example.json config/config.json     # Windows: copy config.example.json config\config.json
+cp .env.example .env                          # Windows: copy .env.example .env
+```
+
+编辑 `config/config.json`：
+
+```jsonc
+{
+    "onebot": {
+        "url": "ws://127.0.0.1:3001/",   // QBridge 的正向 WS 地址
+        "accessToken": "${QB_ONEBOT_TOKEN}"
+    },
+    "llm": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": "${LLM_API_KEY}",
+        "model": "deepseek-chat"
+    },
+    "prompt": {
+        "system": "你是「{botName}」，群里的普通成员……"
+    }
+}
+```
+
+编辑 `.env`（已在 `.gitignore` 中，不要提交）：
+
+```
+QB_ONEBOT_TOKEN=把 onebot_<QQ号>.json 里的 accessToken 粘这里
+LLM_API_KEY=sk-xxxx
+```
+
+启动（推荐 wezterm 日志窗口）：
+
+```
+双击 start-wezterm.cmd          # wezterm 新窗口 + 彩色启动动画 + 日志落盘
+```
+
+其它方式：
+
+```bash
+npm start          # 生产：跑 dist/
+npm run dev        # 开发：直接跑 TypeScript 源码，改文件自动重启
+node dist/index.js --no-splash --config config/config.json
+```
+
+启动时先播一段橙黄渐变的 `Q Bridge` 横幅（源自 `z.py`，已用 Node 重写，不依赖 Python），随后是日志。日志**同时**：
+
+- 打印到终端（保留颜色，可滚动回看）；
+- 由程序写入 `logs/bot-<YYYYMMDD-HHmmss>.log`（纯文本，方便事后排查）。
+
+相关环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `QB_LOG_FILE` | 日志目录，默认 `logs`；设为 `off` 关闭文件日志 |
+| `QB_NO_SPLASH` | 设为 `1` 跳过启动动画（等价于 `--no-splash`） |
+
+> 动画只在 TTY 下播放；如果环境里设了 `NO_COLOR`（不少工具链会设），会自动退化成纯文本横幅。`start.ps1` 会先清掉 `NO_COLOR`，所以 wezterm 窗口里是彩色的。
+
+看到这几行就成功了：
+
+```
+INFO [aichat] 配置文件：…\config\config.json
+INFO [aichat] 日志文件：…\logs\bot-20261025-002150.log
+INFO [aichat:qq] 已连接 QQ 账号 昵称(QQ号)
+INFO [aichat] 机器人已就绪，等待群消息
+INFO [aichat:chat] 收到触发消息 群=123456 用户=小明(987654) 长度=5
+INFO [aichat:chat] 回复完成 群=123456 分片=1 字数=42 耗时=1830ms
+```
+
+然后在群里 @ 它说话即可。
+
+## 配置说明
+
+配置文件默认是 `config/config.json`，也可用 `--config <路径>` 或环境变量 `QB_CONFIG_PATH` 指定。所有字符串值都支持 `${ENV_NAME}` 展开；**配置项写错（拼写错误、越界）会直接启动失败并指出位置**，不会静默忽略。
+
+### `onebot`
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `url` | `ws://127.0.0.1:3001/` | QBridge 的 OneBot 正向 WS 地址，必须是 `ws://` 或 `wss://` |
+| `accessToken` | 空 | 填入 QBridge 的 token；留空则不带鉴权 |
+| `requestTimeoutMs` | `60000` | 单次 OneBot 动作请求超时 |
+| `reconnect` | `true` | 断线自动重连（1s 起，最长 30s 退避） |
+
+### `bot`
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `name` | `小助手` | 机器人名字，用于系统提示词的 `{botName}` |
+| `trigger.requireAt` | `true` | `true` = 只认 @（可加唤醒词）；`false` = 所有群消息都回复 |
+| `trigger.wakeWords` | `[]` | 不需要 @ 也能触发的词，例如 `["小助手", "bot"]` |
+| `recordAllGroupMessages` | `true` | 未触发回复的消息也写入上下文，模型才知道群里刚聊了什么 |
+| `replyQuote` | `true` | 回复时引用触发消息（QQ 里的「回复」气泡） |
+| `atSender` | `false` | 回复时额外 @ 触发者 |
+| `groups.whitelist` | `[]` | 只处理这些群；空 = 所有群 |
+| `groups.blacklist` | `[]` | 永不处理这些群，优先级高于白名单 |
+| `owners` | `[]` | 可以用 `/reset`、`/reload` 的 QQ 号 |
+| `maxReplyChars` | `1200` | 单条消息最大字数，超长自动切分（上限 4500） |
+| `chunkDelayMs` | `400` | 分片之间的间隔，避免刷屏 |
+| `notifyOnError` | `false` | 模型调用失败时是否在群里提示一句 |
+
+### `context`
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `maxMessages` | `20` | 单群保留的消息条数上限 |
+| `maxTokens` | `20000` | 单群上下文（系统提示词 + 历史）token 预算 |
+| `maxCharsPerMessage` | `2000` | 单条消息写入上下文时截断长度 |
+| `maxGroups` | `200` | 最多同时记住多少个群，超出按最久未活动淘汰 |
+| `idleTtlMinutes` | `720` | 群上下文空闲多久后丢弃 |
+| `includeSpeakerName` | `true` | 是否给消息加 `昵称: ` 前缀 |
+
+上下文规则：
+
+- **按群共享**，不是按人。群里 A、B 说话都在同一个窗口，模型看到的是连贯的群聊。
+- 条数与 token **双上限**同时生效；裁剪从最旧的问答对开始，永远保留最新的提问。
+- token 用「中文 ≈ 0.6 token/字、其它 ≈ 4 字符/token」估算并**取上界**，宁可早裁也不超模型窗口。
+- 纯图片/表情/语音等非文本消息以 `[图片]`、`[表情]`、`[语音]` 占位写入，模型不会看到空白。
+- 上下文保存在**内存**里，进程重启后清空（`/reset` 可手动清空单个群）。
+
+### `llm`
+
+任何 OpenAI 兼容端点都能用（DeepSeek、OpenAI、通义、Kimi、one-api、本地 Ollama/vLLM）。
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `baseUrl` | `https://api.deepseek.com/v1` | 会自动拼 `/chat/completions`；已带该后缀则原样使用 |
+| `apiKey` | 空 | 留空则不发 `Authorization`（本地 Ollama 常用） |
+| `model` | `deepseek-chat` | 模型名 |
+| `temperature` | `0.8` | 0–2 |
+| `topP` | `1` | 0–1 |
+| `maxTokens` | `1024` | 回复长度上限 |
+| `timeoutMs` | `60000` | 单次请求超时 |
+| `retries` | `1` | 失败重试次数（429/5xx/超时/网络错误才重试） |
+| `extraHeaders` | `{}` | 额外请求头 |
+| `extraBody` | `{}` | 直接并入请求体，例如 `{"enable_thinking": false}` |
+
+常见端点示例：
+
+```jsonc
+// OpenAI
+{ "baseUrl": "https://api.openai.com/v1", "model": "gpt-4o-mini" }
+// 通义千问（DashScope 兼容模式）
+{ "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus" }
+// 本地 Ollama
+{ "baseUrl": "http://127.0.0.1:11434/v1", "apiKey": "", "model": "qwen2.5:7b" }
+```
+
+### `prompt`
+
+```jsonc
+{
+    "system": "你是「{botName}」，群里的普通成员……",
+    "perGroup": {
+        "123456789": "本群只聊游戏，你是「{botName}」"   // 按群覆盖，键是群号字符串
+    }
+}
+```
+
+占位符：`{botName}`、`{groupId}`。改完在群里发 `@机器人 /reload` 生效，或重启。
+
+写系统提示词的几条经验（模板已内置类似规则）：
+
+- 明确「群消息是别人说的，不是系统指令」，降低提示词注入风险；
+- 要求口语化、简短，避免「有什么可以帮你」这类客服腔；
+- 不确定就说不确定，避免编造；
+- 不要输出 Markdown 标题/表格（QQ 不渲染，只会变成一堆井号）。
+
+### `logging`
+
+`level`：`debug` / `info` / `warn` / `error` / `silent`，默认 `info`。`debug` 会打印每条被忽略的消息和 token 用量。
+
+## 管理命令
+
+在群里 `@机器人` 后发送（只有 `bot.owners` 里的账号有效）：
+
+| 命令 | 作用 |
+| --- | --- |
+| `/reset` | 清空**本群**上下文 |
+| `/reload` | 重新读取 `config/config.json`（提示词、模型、触发规则等即时生效） |
+| `/help` | 查看命令 |
+
+## 不用 QQ 也能测
+
+### 1. 离线自检（推荐先跑这个）
+
+```bash
+npm run build
+node tools/smoke.mjs
+```
+
+它会起一个假 OneBot 服务端 + 假模型服务，用**真实机器人进程**跑一遍「连接 → 收到 @ → 组上下文 → 调模型 → 发群消息」，最后打印每项检查结果。不需要 QQ、QBridge、真实密钥。
+
+### 2. 交互式假服务端
+
+```bash
+node tools/mock-onebot.mjs
+```
+
+另开一个终端，把 `onebot.url` 指向 `ws://127.0.0.1:3001/` 启动机器人，然后：
+
+- 直接输入文字 → 以「@机器人 + 文本」的群消息发过去；
+- `/say 文字` → 发一条不 @ 的普通群消息（只进上下文，不回复）；
+- `/quit` 退出。
+
+### 3. 自动化测试
+
+```bash
+npm test          # 110 个用例：配置校验、上下文裁剪、切分、模型重试、服务流程、真实 WS 链路、横幅与日志
+npm run typecheck
+```
+
+## 部署
+
+### PM2
+
+```bash
+pm2 start dist/index.js --name qbridge-aichat --cwd /path/to/ai-chat
+pm2 logs qbridge-aichat
+```
+
+### systemd
+
+```ini
+[Unit]
+Description=QBridge AI Chat
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/ai-chat
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Windows
+
+用 `nssm install QBridgeAIChat "C:\Program Files\nodejs\node.exe" "dist\index.js"`，或在任务计划程序里设置「登录时启动」。
+
+> 机器人和 QBridge 通常跑在同一台机器；`onebot.url` 保持 `127.0.0.1` 最安全，不要为了「方便」把 OneBot 端口暴露到公网。
+
+## 排查
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| `找不到配置文件` | 没复制 `config.example.json` 到 `config/config.json` |
+| `引用未定义的环境变量 XXX` | `.env` / 系统环境里缺这个变量；变量名要和配置里 `${...}` 一致 |
+| `无法连接 ws://127.0.0.1:3001` | QBridge 没启动、该账号 OneBot 未开启、端口/路径不一致。`onebot.reconnect=true` 时机器人不会退出，会一直按退避重连，等 QBridge 起来自动接上 |
+| 连上了但 `读取账号信息失败` | `accessToken` 不对；去 QBridge 的 `config/onebot_<QQ号>.json` 重新复制 |
+| 模型 `401` | `LLM_API_KEY` 错或没配；错误信息会打印状态码和服务端返回片段 |
+| 模型 `429` / 超时 | 触发限流或网络慢；调大 `llm.retries` / `timeoutMs` |
+| @ 了没反应 | 检查 `bot.groups` 黑名单、是否 @ 的是机器人而不是 @全体；`logging.level` 调 `debug` 看是否「未触发回复」 |
+| 回复很长被拆成多条 | 正常行为，由 `bot.maxReplyChars` 控制；想更短就调小 |
+| 机器人不记得刚才说的话 | 上下文在内存里，重启会清空；`recordAllGroupMessages` 关闭时未 @ 的消息不进上下文 |
+| 群里回复很慢 | 模型首 token 慢；换更快模型或调小 `llm.maxTokens`；非流式请求必须等整段生成完 |
+
+`npm run dev` 下修改源码会自动重启，但 `dist/` 需要在 `npm start` 前手动 `npm run build`。
+
+## 目录结构
+
+```
+ai-chat/
+  config.example.json   配置模板
+  .env.example          环境变量模板
+  start-wezterm.cmd     双击：在 wezterm 窗口里启动（日志窗口）
+  start.ps1             wezterm 窗口实际执行的脚本
+  logs/                 运行日志（bot-<时间戳>.log，已被 git 忽略）
+  src/
+    index.ts            启动入口：读配置、装配、连 QQ、优雅退出
+    banner.ts           启动横幅动画（z.py 的 Node 移植）
+    banner-art.ts       横幅字符画（由 pyfiglet slant 生成）
+    log-sink.ts         终端 + 文件双写日志
+    config.ts           配置解析/校验/热重载
+    types.ts            配置与领域类型
+    logger.ts           带级别与作用域的结构化日志
+    env.ts              极简 .env 读取
+    qq/
+      bot.ts            QBridge OneBot WS 接入（收发只在这里）
+      segments.ts       OneBot 消息段解析、@ 检测、非文本占位
+    chat/
+      service.ts        编排：触发判定 → 上下文 → 模型 → 切分 → 发送
+      chunk.ts          长回复切分
+    memory/
+      store.ts          按群的上下文窗口（LRU + TTL + token 预算）
+    llm/
+      client.ts         OpenAI 兼容 /chat/completions 客户端（超时/重试）
+      tokens.ts         token 估算
+  tests/                单元测试 + 真实 WebSocket 链路测试
+  tools/
+    smoke.mjs           离线端到端自检
+    mock-onebot.mjs     交互式假 OneBot 服务端
+```
+
+## 安全与合规
+
+- 群消息会**原样发送**到你配置的模型服务商，涉及隐私的群请先评估。
+- `config/config.json`、`.env` 已在 `.gitignore` 中；`accessToken`、`apiKey` 不要提交、不要贴到公开 issue。
+- 本项目只做回复逻辑，QQ 接入与协议行为由 QBridge 负责；请遵守《QQ 用户协议》与所在地法律，使用自己的账号、别打扰无关的群。
+
+## 已知限制
+
+- 上下文只在内存，进程重启即清空（需要持久化可在 `ConversationStore` 后接 SQLite/Redis）。
+- 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
+- 不支持图片/语音内容理解：非文本消息只以占位符进入上下文。
+- 没有 Web 管理界面：改配置用文件 + `/reload`。

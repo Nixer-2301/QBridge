@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+
+# 真实配置与密钥永远不要提交
+config/config.json
+.env
+*.log
+logs/
+
+# QBridge / SnowLuma 发行包（第三方二进制，不进仓库）
+SnowLuma-*/
+*.zip

@@ -1,0 +1,349 @@
+import { message as segments } from '@snowluma/sdk';
+import type { AnyMessageSegment } from '@snowluma/sdk';
+import { splitReply } from './chunk.ts';
+import type { ConfigStore } from '../config.ts';
+import { ConfigError } from '../config.ts';
+import type { Logger } from '../logger.ts';
+import type { LlmResult } from '../llm/client.ts';
+import { estimateChatTokens } from '../llm/tokens.ts';
+import type { ConversationStore } from '../memory/store.ts';
+import type { ChatMessage, GroupsConfig, TriggerConfig } from '../types.ts';
+import type { GroupMessageEventLike, ParsedGroupMessage } from '../qq/segments.ts';
+import { formatForHistory, parseGroupMessage } from '../qq/segments.ts';
+
+export interface GroupSender {
+    sendGroupMessage(groupId: number, message: AnyMessageSegment[]): Promise<unknown>;
+}
+
+/** 只要满足这个形状即可，测试里可以直接注入假模型。 */
+export interface ChatModel {
+    chat(messages: ChatMessage[], signal?: AbortSignal): Promise<LlmResult>;
+}
+
+/**
+ * 发送能力的占位槽：业务对象先创建，连接建立后再注入真实发送实现。
+ * 没注入就发消息说明启动顺序错了，直接报错而不是静默丢弃。
+ */
+export class SenderSlot implements GroupSender {
+    private target: GroupSender | undefined;
+
+    attach(target: GroupSender): void {
+        this.target = target;
+    }
+
+    sendGroupMessage(groupId: number, message: AnyMessageSegment[]): Promise<unknown> {
+        if (!this.target) {
+            return Promise.reject(new Error('发送通道尚未就绪：还未连接到 QBridge 的 OneBot 服务'));
+        }
+
+        return this.target.sendGroupMessage(groupId, message);
+    }
+}
+
+export interface ChatServiceOptions {
+    config: ConfigStore;
+    store: ConversationStore;
+    llm: ChatModel;
+    sender: GroupSender;
+    logger: Logger;
+    sleep?: (ms: number) => Promise<void>;
+}
+
+const COMMAND_PATTERN = /^\/([a-z][a-z0-9_-]*)(?:\s+([\s\S]*))?$/i;
+const HELP_TEXT = ['可用命令：', '/reset 清空本群上下文（仅管理员）', '/reload 重新加载配置文件（仅管理员）'].join(
+    '\n',
+);
+
+export function isGroupAllowed(groupId: number, groups: GroupsConfig): boolean {
+    if (groups.blacklist.includes(groupId)) {
+        return false;
+    }
+
+    if (groups.whitelist.length > 0 && !groups.whitelist.includes(groupId)) {
+        return false;
+    }
+
+    return true;
+}
+
+/** @ 或被唤醒词命中才回复；`requireAt: false` 时退化为「所有群消息都回复」。 */
+export function isTriggered(message: ParsedGroupMessage, trigger: TriggerConfig): boolean {
+    if (message.mentionedSelf) {
+        return true;
+    }
+
+    if (!trigger.requireAt) {
+        return true;
+    }
+
+    if (trigger.wakeWords.length === 0) {
+        return false;
+    }
+
+    const haystack = message.text.toLowerCase();
+
+    return trigger.wakeWords.some((word) => haystack.includes(word.toLowerCase()));
+}
+
+export class ChatService {
+    private readonly options: ChatServiceOptions;
+    private readonly queues = new Map<number, Promise<void>>();
+    private readonly seenMessageKeys = new Set<string>();
+    private readonly seenOrder: string[] = [];
+
+    constructor(options: ChatServiceOptions) {
+        this.options = options;
+    }
+
+    async onGroupMessage(event: GroupMessageEventLike): Promise<void> {
+        const config = this.options.config.value;
+        const logger = this.options.logger;
+
+        // 只处理真实收到的群消息：跳过自己发出的回显与私聊。
+        if (event.post_type !== undefined && event.post_type !== 'message') {
+            return;
+        }
+
+        if (event.user_id === event.self_id) {
+            return;
+        }
+
+        if (!isGroupAllowed(event.group_id, config.bot.groups)) {
+            logger.debug(`群 ${event.group_id} 不在处理范围，忽略`);
+            return;
+        }
+
+        if (this.isDuplicate(event.group_id, event.message_id)) {
+            logger.debug(`消息 ${event.message_id} 已处理过，跳过重复投递`);
+            return;
+        }
+
+        const parsed = parseGroupMessage(event, event.self_id);
+
+        if (parsed.text.length === 0 && parsed.mentionedSelf) {
+            parsed.text = '（@了你，但没有附带文字）';
+        }
+
+        if (parsed.text.length === 0) {
+            return;
+        }
+
+        const triggered = isTriggered(parsed, config.bot.trigger);
+
+        if (triggered) {
+            const handled = await this.handleCommand(parsed);
+
+            if (handled) {
+                return;
+            }
+        }
+
+        if (config.bot.recordAllGroupMessages || triggered) {
+            this.options.store.appendUser(
+                parsed.groupId,
+                formatForHistory(parsed, config.context.includeSpeakerName),
+            );
+        }
+
+        if (!triggered) {
+            logger.debug(`群 ${parsed.groupId} 消息未触发回复`, `from=${parsed.senderName}`);
+            return;
+        }
+
+        logger.info(
+            `收到触发消息 群=${parsed.groupId} 用户=${parsed.senderName}(${parsed.userId}) 长度=${parsed.text.length}`,
+        );
+
+        // 在入队前拍下历史快照：同群排队时不会把后面到达的消息算进这一次提问。
+        const history = this.options.store.messages(parsed.groupId);
+
+        await this.enqueue(parsed.groupId, () => this.reply(parsed, history));
+    }
+
+    private async reply(parsed: ParsedGroupMessage, history: ChatMessage[]): Promise<void> {
+        const config = this.options.config.value;
+        const logger = this.options.logger;
+        const startedAt = Date.now();
+
+        try {
+            const prompt = this.buildPrompt(parsed.groupId, history);
+            const result = await this.options.llm.chat(prompt);
+            const chunks = splitReply(result.text, config.bot.maxReplyChars);
+
+            if (chunks.length === 0) {
+                logger.warn('模型返回内容为空，跳过发送');
+                return;
+            }
+
+            for (let index = 0; index < chunks.length; index += 1) {
+                const chunk = chunks[index];
+
+                if (chunk === undefined) {
+                    continue;
+                }
+
+                const out: AnyMessageSegment[] = [];
+
+                if (index === 0 && config.bot.replyQuote) {
+                    out.push(segments.reply(parsed.messageId));
+                }
+
+                if (config.bot.atSender) {
+                    out.push(segments.at(parsed.userId));
+                    out.push(segments.text(' '));
+                }
+
+                out.push(segments.text(chunk));
+
+                await this.options.sender.sendGroupMessage(parsed.groupId, out);
+
+                if (index < chunks.length - 1 && config.bot.chunkDelayMs > 0) {
+                    await this.sleep(config.bot.chunkDelayMs);
+                }
+            }
+
+            this.options.store.appendAssistant(parsed.groupId, result.text);
+            logger.info(
+                `回复完成 群=${parsed.groupId} 分片=${chunks.length} 字数=${result.text.length} 耗时=${Date.now() - startedAt}ms`,
+            );
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+
+            logger.error(`回复失败 群=${parsed.groupId}`, error);
+
+            if (config.bot.notifyOnError) {
+                try {
+                    await this.options.sender.sendGroupMessage(parsed.groupId, [
+                        segments.text('刚才走神了，稍后再试一次吧。'),
+                    ]);
+                } catch (sendError) {
+                    logger.error('发送错误提示也失败了', sendError);
+                }
+            }
+
+            logger.debug(`失败原因：${reason}`);
+        }
+    }
+
+    private buildPrompt(groupId: number, snapshot: ChatMessage[]): ChatMessage[] {
+        const config = this.options.config.value;
+        const override = config.prompt.perGroup[String(groupId)];
+        const systemTemplate = override ?? config.prompt.system;
+        const system = systemTemplate
+            .replace(/\{botName\}/g, config.bot.name)
+            .replace(/\{groupId\}/g, String(groupId));
+        const messages: ChatMessage[] = [{ role: 'system', content: system }, ...snapshot];
+
+        // 整个请求（系统提示词 + 历史）都不超过 context.maxTokens，超出就从最旧的问答对开始丢。
+        while (messages.length > 2 && estimateChatTokens(messages) > config.context.maxTokens) {
+            messages.splice(1, 1);
+
+            while (messages.length > 2 && messages[1]?.role === 'assistant') {
+                messages.splice(1, 1);
+            }
+        }
+
+        return messages;
+    }
+
+    private async handleCommand(parsed: ParsedGroupMessage): Promise<boolean> {
+        const match = COMMAND_PATTERN.exec(parsed.text.trim());
+
+        if (!match) {
+            return false;
+        }
+
+        const name = (match[1] ?? '').toLowerCase();
+        const config = this.options.config.value;
+        const isOwner = config.bot.owners.includes(parsed.userId);
+
+        if (name === 'help') {
+            await this.sendText(parsed, HELP_TEXT);
+            return true;
+        }
+
+        if (name !== 'reset' && name !== 'reload') {
+            return false;
+        }
+
+        if (!isOwner) {
+            this.options.logger.debug(`非管理员尝试执行 /${name}`, `user=${parsed.userId}`);
+            await this.sendText(parsed, '这个命令只有机器人管理员能用。');
+            return true;
+        }
+
+        if (name === 'reset') {
+            this.options.store.clear(parsed.groupId);
+            await this.sendText(parsed, '本群上下文已清空。');
+            this.options.logger.info(`管理员清空了群 ${parsed.groupId} 的上下文`);
+            return true;
+        }
+
+        try {
+            this.options.config.reload();
+            await this.sendText(parsed, '配置已重新加载。');
+            this.options.logger.info('配置已通过 /reload 重新加载');
+        } catch (error) {
+            const reason = error instanceof ConfigError ? error.message : String(error);
+            this.options.logger.error('配置重新加载失败', error);
+            await this.sendText(parsed, `配置加载失败：${reason}`);
+        }
+
+        return true;
+    }
+
+    private async sendText(parsed: ParsedGroupMessage, text: string): Promise<void> {
+        try {
+            await this.options.sender.sendGroupMessage(parsed.groupId, [segments.text(text)]);
+        } catch (error) {
+            this.options.logger.error('发送消息失败', error);
+        }
+    }
+
+    /** 去重键带上群号：不同群里出现相同 message_id 时互不影响。 */
+    private isDuplicate(groupId: number, messageId: number): boolean {
+        const key = `${groupId}:${messageId}`;
+
+        if (this.seenMessageKeys.has(key)) {
+            return true;
+        }
+
+        this.seenMessageKeys.add(key);
+        this.seenOrder.push(key);
+
+        if (this.seenOrder.length > 1_000) {
+            const oldest = this.seenOrder.shift();
+
+            if (oldest !== undefined) {
+                this.seenMessageKeys.delete(oldest);
+            }
+        }
+
+        return false;
+    }
+
+    /** 同一个群串行处理，保证上下文与回复顺序稳定；不同群互不阻塞。 */
+    private enqueue(groupId: number, task: () => Promise<void>): Promise<void> {
+        const previous = this.queues.get(groupId) ?? Promise.resolve();
+        const next = previous.then(task, task);
+
+        this.queues.set(groupId, next);
+        void next.finally(() => {
+            if (this.queues.get(groupId) === next) {
+                this.queues.delete(groupId);
+            }
+        });
+
+        return next;
+    }
+
+    private sleep(ms: number): Promise<void> {
+        if (this.options.sleep) {
+            return this.options.sleep(ms);
+        }
+
+        return new Promise((resolve) => {
+            setTimeout(resolve, ms);
+        });
+    }
+}

@@ -1,0 +1,2 @@
+# 放置 config.json（由 ../config.example.json 复制而来）。
+# 真实的 config.json 已在 .gitignore 中，不会被提交。
