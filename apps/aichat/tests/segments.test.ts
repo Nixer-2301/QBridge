@@ -112,6 +112,39 @@ describe('parseGroupMessage', () => {
         expect(parsed.text).toBe('[表情:是钢卷][表情]');
     });
 
+    it('QBridge 把商城表情发成带 emoji_id 的 image 段时，记下元数据且不喂给视觉', () => {
+        const parsed = parseGroupMessage(
+            event({
+                message: [
+                    {
+                        type: 'image',
+                        data: {
+                            file: 'ab-ab12cd34.gif',
+                            url: 'https://gxh.vip.qq.com/club/item/parcel/item/ab/ab12cd34/raw300.gif',
+                            summary: '是钢卷',
+                            emoji_id: 'ab12cd34ef56',
+                            emoji_package_id: 42,
+                            key: 'k1',
+                        },
+                    },
+                    { type: 'text', data: { text: ' 看这个' } },
+                ],
+            }),
+        );
+
+        expect(parsed.text).toBe('[表情:是钢卷] 看这个');
+        expect(parsed.images).toEqual([]);
+        expect(parsed.faces).toEqual([
+            {
+                summary: '是钢卷',
+                emojiId: 'ab12cd34ef56',
+                emojiPackageId: 42,
+                key: 'k1',
+                url: 'https://gxh.vip.qq.com/club/item/parcel/item/ab/ab12cd34/raw300.gif',
+            },
+        ]);
+    });
+
     it('记录被引用消息的 id', () => {
         const parsed = parseGroupMessage(
             event({ message: [{ type: 'reply', data: { id: '-42' } }, { type: 'text', data: { text: '对' } }] }),

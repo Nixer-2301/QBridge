@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { showSplash } from './banner.ts';
 import { formatPreflight, runPreflight } from './check.ts';
+import { FaceStore } from './chat/faces.ts';
 import { ChatService, SenderSlot } from './chat/service.ts';
 import { ConfigStore, resolveConfigPath } from './config.ts';
 import { loadEnvFile } from './env.ts';
@@ -149,6 +150,16 @@ async function main(): Promise<void> {
     });
     prompts.watch();
 
+    const faces = new FaceStore(path.resolve('data/faces.json'), logger.child('faces'));
+    logger.info(`表情缓存：${faces.size} 个`, faces.list().slice(0, 5).join('、'));
+
+    for (const rule of settings.autoReplies.rules) {
+        logger.info(
+            `自动表情规则：用户 ${rule.userIds.join(',')} → ${rule.face ?? rule.image ?? rule.text ?? '?'}`,
+            `群=${rule.groupIds.length > 0 ? rule.groupIds.join(',') : '全部'} 冷却=${rule.cooldownSeconds}s 概率=${rule.probability}`,
+        );
+    }
+
     const stats = { events: 0, lastReply: '—' };
     const sender = new SenderSlot();
     const service = new ChatService({
@@ -157,6 +168,7 @@ async function main(): Promise<void> {
         llm,
         sender,
         prompts,
+        faces,
         logger: logger.child('chat'),
         onActivity: (activity) => {
             if (activity.type === 'trigger') {
@@ -267,3 +279,5 @@ main().catch((error: unknown) => {
 
     process.exitCode = 1;
 });
+
+

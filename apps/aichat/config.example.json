@@ -75,10 +75,25 @@
                 ]
             }
         ]
+    },    "autoReplies": {
+        "enabled": true,
+        "rules": [
+            {
+                "userIds": [
+                    1609403959
+                ],
+                "groupIds": [
+                    628101497
+                ],
+                "face": "是钢卷",
+                "cooldownSeconds": 60
+            }
+        ]
     },    "logging": {
         "level": "info"
     }
 }
+
 
 
 

@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
     AppConfig,
+    AutoReplyConfig,
+    AutoReplyRuleConfig,
     BotConfig,
     ContextConfig,
     GithubConfig,
@@ -426,6 +428,68 @@ function parseGithub(raw: unknown): GithubConfig {
     return config;
 }
 
+function parseAutoReplyRule(raw: unknown, pathName: string): AutoReplyRuleConfig {
+    const source = readObject(raw, pathName);
+    assertKeys(
+        source,
+        ['userIds', 'groupIds', 'face', 'image', 'text', 'cooldownSeconds', 'probability'],
+        pathName,
+    );
+
+    const userIds = readPositiveIntArray(source, 'userIds', pathName);
+
+    if (userIds.length === 0) {
+        throw new ConfigError(`${pathName}.userIds 至少要有一个 QQ 号`);
+    }
+
+    const face = readString(source, 'face', pathName, '').trim();
+    const image = readString(source, 'image', pathName, '').trim();
+    const text = readString(source, 'text', pathName, '').trim();
+
+    if (face.length === 0 && image.length === 0 && text.length === 0) {
+        throw new ConfigError(`${pathName} 至少要配置 face、image、text 之一`);
+    }
+
+    const rule: AutoReplyRuleConfig = {
+        userIds,
+        groupIds: readPositiveIntArray(source, 'groupIds', pathName),
+        cooldownSeconds: readNumber(source, 'cooldownSeconds', pathName, 60, 0, 86_400),
+        probability: readNumber(source, 'probability', pathName, 1, 0, 1, false),
+    };
+
+    if (face.length > 0) {
+        rule.face = face;
+    }
+
+    if (image.length > 0) {
+        rule.image = image;
+    }
+
+    if (text.length > 0) {
+        rule.text = text;
+    }
+
+    return rule;
+}
+
+function parseAutoReplies(raw: unknown): AutoReplyConfig {
+    const source = readObject(raw, 'autoReplies');
+    assertKeys(source, ['enabled', 'rules'], 'autoReplies');
+
+    const rulesRaw = source['rules'];
+
+    if (rulesRaw !== undefined && !Array.isArray(rulesRaw)) {
+        throw new ConfigError('autoReplies.rules 必须是数组');
+    }
+
+    return {
+        enabled: readBoolean(source, 'enabled', 'autoReplies', false),
+        rules: (rulesRaw ?? []).map((item, index) =>
+            parseAutoReplyRule(item, `autoReplies.rules[${index}]`),
+        ),
+    };
+}
+
 function parseVision(raw: unknown): VisionConfig {    const source = readObject(raw, 'vision');
     assertKeys(source, ['enabled', 'maxImages', 'maxBytes'], 'vision');
 
@@ -548,7 +612,11 @@ function parsePrompt(raw: unknown): PromptConfig {
 export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.env): AppConfig {
     const expanded = expandEnv(rawInput, 'config', env);
     const root = readObject(expanded, 'config');
-    assertKeys(root, ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'github', 'logging'], 'config');
+    assertKeys(
+        root,
+        ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'github', 'autoReplies', 'logging'],
+        'config',
+    );
 
     const logging = readObject(root['logging'], 'logging');
     assertKeys(logging, ['level'], 'logging');
@@ -567,6 +635,7 @@ export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.
         prompt: parsePrompt(root['prompt']),
         vision: parseVision(root['vision']),
         github: parseGithub(root['github']),
+        autoReplies: parseAutoReplies(root['autoReplies']),
         logging: { level },
     };
 }
@@ -645,6 +714,7 @@ export class ConfigStore {
         return this.configValue;
     }
 }
+
 
 
 

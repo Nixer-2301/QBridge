@@ -133,6 +133,28 @@ export interface GithubConfig {
     targets: GithubTargetConfig[];
 }
 
+export interface AutoReplyRuleConfig {
+    /** 触发用户（QQ 号） */
+    userIds: number[];
+    /** 生效群；空数组表示所有群 */
+    groupIds: number[];
+    /** 商城表情的文字摘要，需要先「学到」 */
+    face?: string;
+    /** 兜底图片：本地路径 / http(s) / base64 */
+    image?: string;
+    /** 兜底文字 */
+    text?: string;
+    /** 同一群同一规则的冷却秒数 */
+    cooldownSeconds: number;
+    /** 命中概率 0~1 */
+    probability: number;
+}
+
+export interface AutoReplyConfig {
+    enabled: boolean;
+    rules: AutoReplyRuleConfig[];
+}
+
 export interface AppConfig {
     onebot: OneBotConfig;
     bot: BotConfig;
@@ -141,6 +163,7 @@ export interface AppConfig {
     prompt: PromptConfig;
     vision: VisionConfig;
     github: GithubConfig;
+    autoReplies: AutoReplyConfig;
     logging: { level: LogLevel };
 }
 
@@ -155,6 +178,7 @@ export interface ChatMessage {
     /** 纯文本，或 OpenAI 兼容的多模态分段（文本 + 图片）。 */
     content: string | ContentPart[];
 }
+
 
 
 

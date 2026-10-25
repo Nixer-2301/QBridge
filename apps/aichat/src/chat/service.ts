@@ -1,6 +1,8 @@
 import { message as segments } from '@snowluma/sdk';
 import type { AnyMessageSegment } from '@snowluma/sdk';
+import { buildAutoReplySegments, cooldownKey, matchAutoReply } from './auto-reply.ts';
 import { splitReply } from './chunk.ts';
+import type { FaceStore } from './faces.ts';
 import { buildImageParts } from './vision.ts';
 import type { ConfigStore } from '../config.ts';
 import type { Logger } from '../logger.ts';
@@ -57,12 +59,22 @@ export interface ChatServiceOptions {
     logger: Logger;
     /** 系统提示词来源（文件驱动，可按群覆盖）。 */
     prompts: PromptSource;
+    /** 商城表情缓存（用于自动回发同一个表情包） */
+    faces?: FaceStore;
+    /** 注入随机数，便于测试 probability */
+    random?: () => number;
     sleep?: (ms: number) => Promise<void>;
     onActivity?: (activity: ChatActivity) => void;
 }
 
 const COMMAND_PATTERN = /^\/([a-z][a-z0-9_-]*)(?:\s+([\s\S]*))?$/i;
-const HELP_TEXT = ['可用命令：', '/ping 检查机器人是否在线', '/reset 清空本群上下文（仅管理员）', '/reload 重新加载配置文件（仅管理员）'].join(
+const HELP_TEXT = [
+    '可用命令：',
+    '/ping 检查机器人是否在线',
+    '/face <名称> 发送已学到的表情包',
+    '/reset 清空本群上下文（仅管理员）',
+    '/reload 重新加载配置文件（仅管理员）',
+].join(
     '\n',
 );
 
@@ -116,6 +128,8 @@ export class ChatService {
     private readonly seenOrder: string[] = [];
     /** 每个群最近发出去的消息 id，用来识别「引用回复机器人」的触发方式。 */
     private readonly sentIds = new Map<number, number[]>();
+    /** 自动表情的冷却记录：规则索引:群号 → 上次发送时间 */
+    private readonly autoCooldowns = new Map<string, number>();
 
     constructor(options: ChatServiceOptions) {
         this.options = options;
@@ -146,6 +160,15 @@ export class ChatService {
 
         const parsed = parseGroupMessage(event, event.self_id);
 
+        // 收到商城表情就记下 emoji_id/key，之后「自动表情」才能原样回发。
+        if (parsed.faces.length > 0 && this.options.faces) {
+            const learned = this.options.faces.remember(parsed.faces);
+
+            if (learned) {
+                logger.debug(`已缓存表情：${parsed.faces.map((face) => face.summary).join('、')}`);
+            }
+        }
+
         if (parsed.text.length === 0 && parsed.mentionedSelf) {
             parsed.text = '（@了你，但没有附带文字）';
         }
@@ -153,6 +176,8 @@ export class ChatService {
         if (parsed.text.length === 0) {
             return;
         }
+
+        await this.maybeAutoReply(parsed);
 
         const repliedToSelf =
             config.bot.triggerOnReply &&
@@ -194,6 +219,50 @@ export class ChatService {
         const history = this.options.store.messages(parsed.groupId);
 
         await this.enqueue(parsed.groupId, () => this.reply(parsed, history));
+    }
+
+    /** 指定用户发言时回一个固定表情包（不发模型、不计入上下文）。 */
+    private async maybeAutoReply(parsed: ParsedGroupMessage): Promise<void> {
+        const config = this.options.config.value;
+        const rules = config.autoReplies;
+
+        if (!rules.enabled || rules.rules.length === 0) {
+            return;
+        }
+
+        const now = Date.now();
+        const match = matchAutoReply(
+            rules.rules,
+            { userId: parsed.userId, groupId: parsed.groupId },
+            this.autoCooldowns,
+            now,
+            this.options.random,
+        );
+
+        if (!match) {
+            return;
+        }
+
+        const face = match.rule.face ? this.options.faces?.get(match.rule.face) : undefined;
+        const segments = buildAutoReplySegments(match.rule, face, {
+            maxImageBytes: config.vision.maxBytes,
+            logger: this.options.logger,
+        });
+
+        if (!segments) {
+            return;
+        }
+
+        try {
+            await this.send(parsed.groupId, segments);
+            this.autoCooldowns.set(cooldownKey(match.index, parsed.groupId), now);
+            this.options.logger.info(
+                `自动表情 群=${parsed.groupId} 用户=${parsed.senderName}(${parsed.userId})`,
+                match.rule.face ? `表情=${match.rule.face}` : `规则=${match.index}`,
+            );
+        } catch (error) {
+            this.options.logger.error('自动表情发送失败', error);
+        }
     }
 
     private async reply(parsed: ParsedGroupMessage, history: ChatMessage[]): Promise<void> {
@@ -393,6 +462,37 @@ export class ChatService {
             return true;
         }
 
+        if (name === 'face') {
+            const summary = (match[2] ?? '').trim();
+            const known = this.options.faces?.list() ?? [];
+
+            if (summary.length === 0) {
+                const listed = known.length > 0 ? known.slice(-10).join('、') : '（暂无）';
+
+                await this.sendText(parsed, `用法：/face 表情名。已学到：${listed}`);
+                return true;
+            }
+
+            const found = this.options.faces?.get(summary);
+
+            if (!found) {
+                await this.sendText(parsed, `还没学到「${summary}」。让它被发一次就会自动记住。`);
+                return true;
+            }
+
+            const faceSegments = buildAutoReplySegments(
+                { userIds: [], groupIds: [], face: summary, cooldownSeconds: 0, probability: 1 },
+                found,
+                { maxImageBytes: config.vision.maxBytes, logger: this.options.logger },
+            );
+
+            if (faceSegments) {
+                await this.send(parsed.groupId, faceSegments);
+            }
+
+            return true;
+        }
+
         if (name === 'help') {
             await this.sendText(parsed, HELP_TEXT);
             return true;
@@ -506,6 +606,8 @@ export class ChatService {
         });
     }
 }
+
+
 
 
 

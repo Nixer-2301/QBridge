@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { FaceStore } from '../src/chat/faces.ts';
 import { ChatService, SenderSlot } from '../src/chat/service.ts';
 import type { ChatModel, GroupSender } from '../src/chat/service.ts';
 import { ConfigStore, parseConfig } from '../src/config.ts';
@@ -34,6 +35,7 @@ function createHarness(
         systemFor?: (groupId: number) => string;
         reloadPrompts?: () => void;
         chat?: ChatModel['chat'];
+        faces?: FaceStore;
     } = {},
 ): Harness {
     const appConfig: AppConfig = parseConfig(overrides, {});
@@ -87,6 +89,7 @@ function createHarness(
             systemFor: options.systemFor ?? (() => '你是测试助手。'),
             reload: options.reloadPrompts,
         },
+        ...(options.faces ? { faces: options.faces } : {}),
         logger,
         sleep: async () => {},
     });
@@ -784,5 +787,112 @@ describe('ChatService 自检命令', () => {
 
         expect(harness.model.calls).toHaveLength(0);
         expect(textsOf(harness.sender.sent[0]?.message ?? [])[0]).toContain('pong');
+    });
+});
+
+
+describe('ChatService 自动表情', () => {
+    const targetUser = 1_609_403_959;
+
+    function faceRule(overrides: Record<string, unknown> = {}) {
+        return {
+            enabled: true,
+            rules: [
+                {
+                    userIds: [targetUser],
+                    groupIds: [GROUP_ID],
+                    face: '是钢卷',
+                    cooldownSeconds: 60,
+                    ...overrides,
+                },
+            ],
+        };
+    }
+
+    function userMessage(messageId: number, text = '冲') {
+        return event({
+            message_id: messageId,
+            user_id: targetUser,
+            message: [{ type: 'text', data: { text } }],
+            sender: { user_id: targetUser, nickname: 'RE', card: '' },
+        });
+    }
+
+    function createFaceStore(): FaceStore {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qb-face-store-'));
+        const store = new FaceStore(path.join(dir, 'faces.json'), logger);
+
+        store.remember([
+            {
+                summary: '是钢卷',
+                emojiId: 'abc123def456',
+                emojiPackageId: 42,
+                key: 'key-1',
+                url: 'https://gxh.vip.qq.com/club/item/parcel/item/ab/abc123def456/raw300.gif',
+            },
+        ]);
+
+        return store;
+    }
+
+    it('指定用户发言时自动回发表情包（不调用模型）', async () => {
+        const harness = createHarness({ autoReplies: faceRule() }, { faces: createFaceStore() });
+
+        await harness.service.onGroupMessage(userMessage(-80));
+
+        expect(harness.model.calls).toHaveLength(0);
+        expect(harness.sender.sent).toHaveLength(1);
+        expect(harness.sender.sent[0]?.message[0]).toMatchObject({
+            type: 'image',
+            data: { emoji_id: 'abc123def456', emoji_package_id: 42, key: 'key-1', summary: '是钢卷' },
+        });
+    });
+
+    it('冷却期内不重复发送', async () => {
+        const harness = createHarness({ autoReplies: faceRule() }, { faces: createFaceStore() });
+
+        await harness.service.onGroupMessage(userMessage(-81));
+        await harness.service.onGroupMessage(userMessage(-82));
+
+        expect(harness.sender.sent).toHaveLength(1);
+    });
+
+    it('还没学到表情时不发送，也不会报错', async () => {
+        const harness = createHarness({ autoReplies: faceRule() });
+
+        await harness.service.onGroupMessage(userMessage(-83));
+
+        expect(harness.sender.sent).toHaveLength(0);
+    });
+
+    it('关闭 autoReplies 后不发送', async () => {
+        const harness = createHarness(
+            { autoReplies: { enabled: false, rules: faceRule().rules } },
+            { faces: createFaceStore() },
+        );
+
+        await harness.service.onGroupMessage(userMessage(-84));
+
+        expect(harness.sender.sent).toHaveLength(0);
+    });
+
+    it('/face 名称 发送已学到的表情包', async () => {
+        const harness = createHarness({}, { faces: createFaceStore() });
+
+        await harness.service.onGroupMessage(atSelf('/face 是钢卷', -85));
+
+        expect(harness.sender.sent).toHaveLength(1);
+        expect(harness.sender.sent[0]?.message[0]).toMatchObject({
+            type: 'image',
+            data: { emoji_id: 'abc123def456' },
+        });
+    });
+
+    it('/face 未学到的名字会提示，不发送', async () => {
+        const harness = createHarness({}, { faces: createFaceStore() });
+
+        await harness.service.onGroupMessage(atSelf('/face 不存在的表情', -86));
+
+        expect(textsOf(harness.sender.sent[0]?.message ?? [])[0]).toContain('还没学到');
     });
 });

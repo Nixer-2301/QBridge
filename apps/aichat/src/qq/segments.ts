@@ -14,6 +14,16 @@ export interface GroupMessageEventLike {
     } | null;
 }
 
+export interface FaceInfo {
+    /** 商城表情的文字摘要，例如「是钢卷」 */
+    summary: string;
+    /** 十六进制 emoji GUID，发送时必须 */
+    emojiId: string;
+    emojiPackageId: number;
+    key: string;
+    url: string;
+}
+
 export interface ParsedGroupMessage {
     groupId: number;
     userId: number;
@@ -25,6 +35,8 @@ export interface ParsedGroupMessage {
     replyToId?: number;
     /** 消息里的图片源（http 链接 / base64 / 本地路径），供视觉模型使用。 */
     images: string[];
+    /** 消息里的商城表情元数据，用于「原样回发同一个表情包」 */
+    faces: FaceInfo[];
 }
 
 /** 非文本消息在上下文里的占位描述，让模型知道「这里有张图」而不是看到空白。 */
@@ -157,6 +169,7 @@ export function parseGroupMessage(
     let mentionedSelf = false;
     let replyToId: number | undefined;
     const images: string[] = [];
+    const faces: FaceInfo[] = [];
 
     for (const segment of segments) {
         if (segment.type === 'text') {
@@ -176,6 +189,26 @@ export function parseGroupMessage(
         }
 
         if (segment.type === 'image') {
+            // QBridge 把商城表情也作为 image 段发出，并带上 emoji_id/key：
+            // 这类段要单独记下来，才能「原样回发同一个表情包」，也不要喂给视觉模型。
+            const emojiId = readString(segment.data, 'emoji_id').trim();
+
+            if (emojiId.length > 0) {
+                const rawSummary = readString(segment.data, 'summary').trim();
+                const face: FaceInfo = {
+                    // QBridge 的 summary 是「[是钢卷]」这种带方括号的写法，去掉便于按名字配置
+                    summary: rawSummary.replace(/^\[+|\]+$/g, '').trim() || '未命名表情',
+                    emojiId,
+                    emojiPackageId: Number(readString(segment.data, 'emoji_package_id') || '0') || 0,
+                    key: readString(segment.data, 'key'),
+                    url: readString(segment.data, 'url').trim(),
+                };
+
+                faces.push(face);
+                text += `[表情:${face.summary}]`;
+                continue;
+            }
+
             const url = readString(segment.data, 'url').trim();
             const file = readString(segment.data, 'file').trim();
             const source = url.length > 0 ? url : file;
@@ -230,6 +263,7 @@ export function parseGroupMessage(
         text: normalizeMessageText(text),
         mentionedSelf,
         images,
+        faces,
     };
 
     if (replyToId !== undefined) {
@@ -247,3 +281,6 @@ export function formatForHistory(message: ParsedGroupMessage, includeSpeakerName
 
     return `${message.senderName}: ${message.text}`;
 }
+
+
+
