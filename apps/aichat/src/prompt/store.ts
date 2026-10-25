@@ -40,9 +40,11 @@ export class PromptStore implements PromptSource {
     private readonly baseDir: string;
     private readonly config: PromptConfig;
     private readonly logger: Logger;
-    private readonly cache = new Map<string, string>();
+    private cache = new Map<string, string>();
     private mainTemplate = '';
     private groupFiles: string[] = [];
+    private readonly watchers: fs.FSWatcher[] = [];
+    private watchTimer: ReturnType<typeof setTimeout> | undefined;
 
     constructor(options: PromptStoreOptions) {
         this.baseDir = options.baseDir;
@@ -79,8 +81,80 @@ export class PromptStore implements PromptSource {
     }
 
     reload(): void {
-        this.cache.clear();
         this.load();
+    }
+
+    /** 监听提示词目录，文件保存后自动重载；`prompt.hotReload=false` 时不启动。 */
+    watch(): void {
+        if (!this.config.hotReload || this.watchers.length > 0) {
+            return;
+        }
+
+        const onChange = (event: string, filename: string | Buffer | null) => {
+            const name = typeof filename === 'string' ? filename : filename?.toString() ?? '';
+
+            this.scheduleReload(name || undefined, event);
+        };
+
+        try {
+            // Windows/macOS 支持递归监听，一次性覆盖 system.md 与 groups/。
+            this.watchers.push(fs.watch(this.dir, { recursive: true }, onChange));
+        } catch {
+            try {
+                this.watchers.push(fs.watch(this.dir, onChange));
+                const groupsDir = path.join(this.dir, GROUPS_DIR);
+
+                if (fs.existsSync(groupsDir)) {
+                    this.watchers.push(fs.watch(groupsDir, onChange));
+                }
+            } catch (error) {
+                this.logger.warn('提示词热更新不可用，只能通过 /reload 手动重载', error);
+
+                return;
+            }
+        }
+
+        this.logger.info(
+            '提示词热更新已开启',
+            `目录=${path.relative(this.baseDir, this.dir).replace(/\\/g, '/')}`,
+        );
+    }
+
+    /** 停止监听，进程退出时调用。 */
+    close(): void {
+        if (this.watchTimer) {
+            clearTimeout(this.watchTimer);
+            this.watchTimer = undefined;
+        }
+
+        for (const watcher of this.watchers) {
+            watcher.close();
+        }
+
+        this.watchers.length = 0;
+    }
+
+    private scheduleReload(filename: string | undefined, event: string): void {
+        if (this.watchTimer) {
+            clearTimeout(this.watchTimer);
+        }
+
+        // 编辑器保存常常连发多个事件，等安静下来再读文件。
+        this.watchTimer = setTimeout(() => {
+            this.watchTimer = undefined;
+
+            try {
+                this.load();
+                this.logger.info('提示词已热更新', filename ? `文件=${filename}（${event}）` : '');
+            } catch (error) {
+                // 保存到一半、文件暂时为空都会走到这里：保留上一版，下一次事件再试。
+                this.logger.warn(
+                    '提示词热更新失败，继续使用上一版',
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+        }, 250);
+        this.watchTimer.unref?.();
     }
 
     private load(): void {
@@ -90,8 +164,14 @@ export class PromptStore implements PromptSource {
             this.createDefaultMain();
         }
 
-        this.mainTemplate = this.readTemplate(this.config.main);
-        this.groupFiles = this.collectGroupFiles();
+        // 先读到临时缓存，全部成功后再整体替换，避免读到一半把旧提示词弄坏。
+        const cache = new Map<string, string>();
+        const mainTemplate = this.readTemplate(this.config.main, cache);
+        const groupFiles = this.collectGroupFiles();
+
+        this.cache = cache;
+        this.mainTemplate = mainTemplate;
+        this.groupFiles = groupFiles;
         this.logger.info(
             `提示词：${path.relative(this.baseDir, this.mainPath).replace(/\\/g, '/')}`,
             this.groupFiles.length > 0 ? `群专属：${this.groupFiles.join(', ')}` : '群专属：无',
@@ -127,26 +207,26 @@ export class PromptStore implements PromptSource {
             .map((name) => `${GROUPS_DIR}/${name}`);
     }
 
-    private readTemplate(relative: string): string {
+    private readTemplate(relative: string, cache: Map<string, string> = this.cache): string {
         const clean = this.normalizeRelative(relative);
-        const cached = this.cache.get(clean);
+        const cached = cache.get(clean);
 
         if (cached !== undefined) {
             return cached;
         }
 
-        const content = this.readWithIncludes(clean, []);
+        const content = this.readWithIncludes(clean, [], cache);
 
         if (content.trim().length === 0) {
             throw new PromptError(`提示词文件内容为空：${path.join(this.dir, clean)}`);
         }
 
-        this.cache.set(clean, content);
+        cache.set(clean, content);
 
         return content;
     }
 
-    private readWithIncludes(relative: string, stack: string[]): string {
+    private readWithIncludes(relative: string, stack: string[], cache: Map<string, string>): string {
         if (stack.includes(relative)) {
             throw new PromptError(`提示词 include 出现循环：${[...stack, relative].join(' -> ')}`);
         }
@@ -171,7 +251,7 @@ export class PromptStore implements PromptSource {
         const content = normalizeText(raw);
 
         return content.replace(INCLUDE_PATTERN, (_match, target: string) =>
-            this.readWithIncludes(this.normalizeRelative(target), [...stack, relative]).trimEnd(),
+            this.readWithIncludes(this.normalizeRelative(target), [...stack, relative], cache).trimEnd(),
         );
     }
 

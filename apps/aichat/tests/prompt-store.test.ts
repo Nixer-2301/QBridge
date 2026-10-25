@@ -43,6 +43,7 @@ function createStore(
         dir: 'prompts',
         main: 'system.md',
         perGroup: {},
+        hotReload: false,
         ...initial,
         ...(options.legacySystem ? { system: options.legacySystem } : {}),
     };
@@ -168,7 +169,7 @@ describe('PromptStore', () => {
 
     it('reload 后读取文件的新内容', () => {
         const root = tempDir();
-        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {} };
+        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {}, hotReload: false };
 
         write(path.join(root, 'prompts'), 'system.md', '第一版');
         const store = new PromptStore({ config, baseDir: root, logger });
@@ -184,7 +185,7 @@ describe('PromptStore', () => {
 
     it('新出现的群专属文件无需 reload 即可命中', () => {
         const root = tempDir();
-        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {} };
+        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {}, hotReload: false };
 
         write(path.join(root, 'prompts'), 'system.md', '通用');
         const store = new PromptStore({ config, baseDir: root, logger });
@@ -221,3 +222,84 @@ describe('PromptStore', () => {
     });
 });
 
+
+
+function waitFor(check: () => boolean, timeoutMs = 4_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+
+        const tick = () => {
+            if (check()) {
+                resolve();
+                return;
+            }
+
+            if (Date.now() - startedAt > timeoutMs) {
+                reject(new Error('等待超时'));
+                return;
+            }
+
+            setTimeout(tick, 50);
+        };
+
+        tick();
+    });
+}
+
+describe('PromptStore 热更新', () => {
+    it('文件保存后自动重载，无需 /reload', async () => {
+        const root = tempDir();
+        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {}, hotReload: true };
+
+        write(path.join(root, 'prompts'), 'system.md', '第一版');
+        const store = new PromptStore({ config, baseDir: root, logger });
+
+        store.watch();
+
+        try {
+            write(path.join(root, 'prompts'), 'system.md', '第二版');
+            await waitFor(() => store.systemFor(1) === '第二版');
+            expect(store.systemFor(1)).toBe('第二版');
+        } finally {
+            store.close();
+        }
+    });
+
+    it('保存到一半的坏文件会保留上一版', async () => {
+        const root = tempDir();
+        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {}, hotReload: true };
+
+        write(path.join(root, 'prompts'), 'system.md', '稳定版本');
+        const store = new PromptStore({ config, baseDir: root, logger });
+
+        store.watch();
+
+        try {
+            write(path.join(root, 'prompts'), 'system.md', '   ');
+            await waitFor(() => false, 500).catch(() => undefined);
+            expect(store.systemFor(1)).toBe('稳定版本');
+        } finally {
+            store.close();
+        }
+    });
+
+    it('关闭热更新后不会自动重载', async () => {
+        const root = tempDir();
+        const config: PromptConfig = { dir: 'prompts', main: 'system.md', perGroup: {}, hotReload: false };
+
+        write(path.join(root, 'prompts'), 'system.md', '第一版');
+        const store = new PromptStore({ config, baseDir: root, logger });
+
+        store.watch();
+
+        try {
+            write(path.join(root, 'prompts'), 'system.md', '第二版');
+            await waitFor(() => false, 500).catch(() => undefined);
+            expect(store.systemFor(1)).toBe('第一版');
+            store.reload();
+            expect(store.systemFor(1)).toBe('第二版');
+        } finally {
+            store.close();
+        }
+    });
+});

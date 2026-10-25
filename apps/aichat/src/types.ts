@@ -24,6 +24,15 @@ export interface GroupsConfig {
     blacklist: number[];
 }
 
+export interface VisionConfig {
+    /** 是否把群消息里的图片一起发给模型。 */
+    enabled: boolean;
+    /** 单条消息最多带几张图。 */
+    maxImages: number;
+    /** 单张图片的最大字节数（本地文件转 data URI 时用）。 */
+    maxBytes: number;
+}
+
 export interface BotConfig {
     name: string;
     trigger: TriggerConfig;
@@ -38,6 +47,10 @@ export interface BotConfig {
     owners: number[];
     /** 单条 QQ 消息的最大字符数，超长回复会被切分。 */
     maxReplyChars: number;
+    /** 空行分隔的段落是否拆成多条消息发送（多段回复）。 */
+    splitParagraphs: boolean;
+    /** 一次回复最多拆成几条消息，超出的段落并回最后一条。 */
+    maxReplySegments: number;
     /** 多条分片之间的间隔毫秒数。 */
     chunkDelayMs: number;
     /** 模型调用失败时是否在群里提示（默认只写日志）。 */
@@ -82,6 +95,8 @@ export interface PromptConfig {
     main: string;
     /** 按群覆盖：群号 -> 相对 dir 的文件路径；留空则自动匹配 `groups/<群号>.md`。 */
     perGroup: Record<string, string>;
+    /** 监听提示词文件变化并自动重载（默认 true）。 */
+    hotReload: boolean;
     /** @deprecated 旧的内联提示词，仅在主提示词文件缺失时用于自动生成它。 */
     system?: string;
 }
@@ -92,12 +107,18 @@ export interface AppConfig {
     context: ContextConfig;
     llm: LlmConfig;
     prompt: PromptConfig;
+    vision: VisionConfig;
     logging: { level: LogLevel };
 }
 
 export type ChatRole = 'system' | 'user' | 'assistant';
 
+export type ContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
     role: ChatRole;
-    content: string;
+    /** 纯文本，或 OpenAI 兼容的多模态分段（文本 + 图片）。 */
+    content: string | ContentPart[];
 }

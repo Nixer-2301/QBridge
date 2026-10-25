@@ -20,6 +20,8 @@
         },
         "owners": [],
         "maxReplyChars": 1200,
+        "splitParagraphs": true,
+        "maxReplySegments": 4,
         "chunkDelayMs": 400,
         "notifyOnError": false
     },
@@ -46,9 +48,16 @@
     "prompt": {
         "dir": "prompts",
         "main": "system.md",
-        "perGroup": {}
+        "perGroup": {},
+        "hotReload": true
+    },
+    "vision": {
+        "enabled": true,
+        "maxImages": 4,
+        "maxBytes": 5242880
     },
     "logging": {
         "level": "info"
     }
 }
+

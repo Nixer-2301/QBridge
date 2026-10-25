@@ -1,5 +1,12 @@
 const BREAK_CHARS = new Set(['。', '！', '？', '!', '?', '；', ';', '，', ',', '、', ' ', '\n']);
 
+export interface SplitReplyOptions {
+    /** 空行分隔的段落是否拆成多条消息（真正的多段回复）。默认 true。 */
+    splitParagraphs?: boolean;
+    /** 一次回复最多拆成几条消息，超出的段落并回最后一条。默认 4。 */
+    maxSegments?: number;
+}
+
 function hardSplit(text: string, limit: number): string[] {
     const parts: string[] = [];
     let rest = text;
@@ -33,22 +40,8 @@ function hardSplit(text: string, limit: number): string[] {
     return parts;
 }
 
-/**
- * 把模型回复切成符合 QQ 单条消息长度限制的片段。
- * 优先按空行/换行切，再按句读切，最后才硬切。
- */
-export function splitReply(text: string, maxChars: number): string[] {
-    const limit = Math.max(1, Math.floor(maxChars));
-    const normalized = text.replace(/\r\n/g, '\n').trim();
-
-    if (normalized.length === 0) {
-        return [];
-    }
-
-    if (normalized.length <= limit) {
-        return [normalized];
-    }
-
+/** 把一段文字按长度切分成若干条 QQ 消息，段内保留单换行。 */
+function splitBlock(block: string, limit: number): string[] {
     const chunks: string[] = [];
     let current = '';
 
@@ -62,11 +55,8 @@ export function splitReply(text: string, maxChars: number): string[] {
         current = '';
     };
 
-    for (const paragraph of normalized.split(/\n/)) {
-        const line = paragraph.trimEnd();
-
+    for (const line of block.split('\n')) {
         if (line.trim().length === 0) {
-            flush();
             continue;
         }
 
@@ -76,16 +66,9 @@ export function splitReply(text: string, maxChars: number): string[] {
             for (const piece of hardSplit(line, limit)) {
                 const trimmed = piece.trim();
 
-                if (trimmed.length === 0) {
-                    continue;
-                }
-
-                if (trimmed.length >= limit) {
+                if (trimmed.length > 0) {
                     chunks.push(trimmed);
-                    continue;
                 }
-
-                current = trimmed;
             }
 
             continue;
@@ -105,4 +88,45 @@ export function splitReply(text: string, maxChars: number): string[] {
     flush();
 
     return chunks;
+}
+
+/**
+ * 把模型回复切成符合 QQ 单条消息长度限制的片段。
+ * 开启 `splitParagraphs` 时，空行分隔的段落各自成为一条消息（多段回复）；
+ * 段落数超过 `maxSegments` 时把后面的段落并进最后一条，避免刷屏。
+ */
+export function splitReply(text: string, maxChars: number, options: SplitReplyOptions = {}): string[] {
+    const limit = Math.max(1, Math.floor(maxChars));
+    const normalized = text.replace(/\r\n/g, '\n').trim();
+
+    if (normalized.length === 0) {
+        return [];
+    }
+
+    const blocks =
+        options.splitParagraphs === false
+            ? [normalized]
+            : normalized
+                  .split(/\n\s*\n/)
+                  .map((block) => block.trim())
+                  .filter((block) => block.length > 0);
+
+    if (blocks.length <= 1) {
+        return splitBlock(normalized, limit);
+    }
+
+    const maxSegments = Math.max(1, Math.floor(options.maxSegments ?? 4));
+    const segments: string[] = [];
+
+    for (const block of blocks) {
+        if (segments.length < maxSegments) {
+            segments.push(block);
+            continue;
+        }
+
+        // 超出段数上限：并进最后一段，最后统一按长度硬切。
+        segments[segments.length - 1] = `${segments[segments.length - 1] ?? ''}\n\n${block}`;
+    }
+
+    return segments.flatMap((segment) => splitBlock(segment, limit));
 }

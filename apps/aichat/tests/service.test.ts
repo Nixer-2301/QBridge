@@ -6,8 +6,10 @@ import { ChatService, SenderSlot } from '../src/chat/service.ts';
 import type { ChatModel, GroupSender } from '../src/chat/service.ts';
 import { ConfigStore, parseConfig } from '../src/config.ts';
 import { createLogger } from '../src/logger.ts';
+import { LlmError } from '../src/llm/client.ts';
 import { ConversationStore } from '../src/memory/store.ts';
 import type { GroupMessageEventLike } from '../src/qq/segments.ts';
+import { contentText } from '../src/llm/tokens.ts';
 import type { AppConfig, ChatMessage } from '../src/types.ts';
 
 const logger = createLogger('test', 'silent');
@@ -31,6 +33,7 @@ function createHarness(
         filePath?: string;
         systemFor?: (groupId: number) => string;
         reloadPrompts?: () => void;
+        chat?: ChatModel['chat'];
     } = {},
 ): Harness {
     const appConfig: AppConfig = parseConfig(overrides, {});
@@ -46,20 +49,22 @@ function createHarness(
     const calls: ChatMessage[][] = [];
     const model: Harness['model'] = {
         calls,
-        chat: async (messages) => {
-            calls.push(messages);
+        chat:
+            options.chat ??
+            (async (messages) => {
+                calls.push(messages);
 
-            if (options.failWith) {
-                throw options.failWith;
-            }
+                if (options.failWith) {
+                    throw options.failWith;
+                }
 
-            const reply =
-                typeof options.reply === 'function'
-                    ? options.reply(messages)
-                    : (options.reply ?? '默认回复');
+                const reply =
+                    typeof options.reply === 'function'
+                        ? options.reply(messages)
+                        : (options.reply ?? '默认回复');
 
-            return { text: reply, attempts: 1 };
-        },
+                return { text: reply, attempts: 1 };
+            }),
     };
 
     const sent: { groupId: number; message: unknown[] }[] = [];
@@ -115,6 +120,10 @@ function atSelf(
             { type: 'text', data: { text } },
         ],
     });
+}
+
+function textOf(message: ChatMessage): string {
+    return typeof message.content === 'string' ? message.content : contentText(message.content);
 }
 
 function textsOf(message: unknown[]): string[] {
@@ -260,7 +269,7 @@ describe('ChatService 上下文', () => {
         await harness.service.onGroupMessage(atSelf('第二问', -3));
 
         const lastPrompt = harness.model.calls.at(-1) ?? [];
-        const contents = lastPrompt.map((item) => item.content);
+        const contents = lastPrompt.map((item) => textOf(item));
 
         expect(contents.some((content) => content.includes('第一问'))).toBe(true);
         expect(contents.some((content) => content.includes('默认回复'))).toBe(true);
@@ -275,8 +284,8 @@ describe('ChatService 上下文', () => {
 
         const lastPrompt = harness.model.calls.at(-1) ?? [];
 
-        expect(lastPrompt.some((item) => item.content.includes('A群问题'))).toBe(false);
-        expect(lastPrompt.some((item) => item.content.includes('B群问题'))).toBe(true);
+        expect(lastPrompt.some((item) => textOf(item).includes('A群问题'))).toBe(false);
+        expect(lastPrompt.some((item) => textOf(item).includes('B群问题'))).toBe(true);
     });
 
     it('超过 token 预算时丢弃最旧的历史', async () => {
@@ -291,8 +300,8 @@ describe('ChatService 上下文', () => {
 
         const prompt = harness.model.calls[0] ?? [];
 
-        expect(prompt.at(-1)?.content).toContain('现在的问题');
-        expect(prompt.some((item) => item.content.includes('历史消息0'))).toBe(false);
+        expect(textOf(prompt.at(-1) ?? { role: 'user', content: '' })).toContain('现在的问题');
+        expect(prompt.some((item) => textOf(item).includes('历史消息0'))).toBe(false);
         expect(prompt.length).toBeLessThan(17);
     });
 
@@ -500,7 +509,8 @@ describe('ChatService 并发', () => {
         const order: string[] = [];
         const harness = createHarness({}, {
             reply: (messages) => {
-                const last = messages.at(-1)?.content ?? '';
+                const lastMessage = messages.at(-1);
+                const last = lastMessage ? textOf(lastMessage) : '';
                 order.push(last);
                 return `回复:${last}`;
             },
@@ -534,6 +544,130 @@ describe('SenderSlot', () => {
         await slot.sendGroupMessage(GROUP_ID, [{ type: 'text', data: { text: 'hi' } }]);
 
         expect(send).toHaveBeenCalledWith(GROUP_ID, [{ type: 'text', data: { text: 'hi' } }]);
+    });
+});
+
+
+
+describe('ChatService 多段回复', () => {
+    it('默认把空行分隔的段落拆成多条消息', async () => {
+        const harness = createHarness({}, { reply: '第一段\n\n第二段\n\n第三段' });
+
+        await harness.service.onGroupMessage(atSelf('说三段', -50));
+
+        expect(harness.sender.sent).toHaveLength(3);
+        expect(harness.sender.sent[0]?.message[0]).toEqual({ type: 'reply', data: { id: '-50' } });
+        expect(textsOf(harness.sender.sent[1]?.message ?? [])[0]).toBe('第二段');
+    });
+
+    it('splitParagraphs=false 时合并为一条消息', async () => {
+        const harness = createHarness({ bot: { splitParagraphs: false } }, { reply: '第一段\n\n第二段' });
+
+        await harness.service.onGroupMessage(atSelf('说两段', -51));
+
+        expect(harness.sender.sent).toHaveLength(1);
+        expect(textsOf(harness.sender.sent[0]?.message ?? [])[0]).toContain('第二段');
+    });
+
+    it('maxReplySegments 限制段数，多出的段落并回最后一条', async () => {
+        const harness = createHarness({ bot: { maxReplySegments: 2 } }, { reply: 'A\n\nB\n\nC\n\nD' });
+
+        await harness.service.onGroupMessage(atSelf('四段', -52));
+
+        expect(harness.sender.sent).toHaveLength(2);
+        expect(textsOf(harness.sender.sent[1]?.message ?? [])[0]).toContain('D');
+    });
+
+    it('上一轮回复的段落不会影响下一轮上下文', async () => {
+        const harness = createHarness({}, { reply: '甲\n\n乙' });
+
+        await harness.service.onGroupMessage(atSelf('第一问', -53));
+        await harness.service.onGroupMessage(atSelf('第二问', -54));
+
+        const lastPrompt = harness.model.calls.at(-1) ?? [];
+
+        expect(lastPrompt.some((item) => item.content === '甲\n\n乙')).toBe(true);
+    });
+});
+
+describe('ChatService 图片输入', () => {
+    function atSelfWithImage(url: string, text = '这是什么', messageId = -60) {
+        return event({
+            message_id: messageId,
+            message: [
+                { type: 'at', data: { qq: String(SELF_ID), name: '小助手' } },
+                { type: 'image', data: { url, file: 'abc.png' } },
+                { type: 'text', data: { text } },
+            ],
+        });
+    }
+
+    it('把图片作为多模态分段发给模型，历史里保留占位符', async () => {
+        const harness = createHarness({}, { reply: '一只猫' });
+
+        await harness.service.onGroupMessage(atSelfWithImage('https://gchat.qpic.cn/a.png?rkey=1'));
+
+        const last = harness.model.calls[0]?.at(-1);
+
+        expect(Array.isArray(last?.content)).toBe(true);
+
+        const parts = last?.content as { type: string; text?: string; image_url?: { url: string } }[];
+
+        expect(parts[0]).toEqual({ type: 'text', text: '小明: [图片]这是什么' });
+        expect(parts[1]).toEqual({ type: 'image_url', image_url: { url: 'https://gchat.qpic.cn/a.png?rkey=1' } });
+        expect(harness.store.messages(GROUP_ID)[0]?.content).toBe('小明: [图片]这是什么');
+    });
+
+    it('vision.enabled=false 时只发文本', async () => {
+        const harness = createHarness({ vision: { enabled: false } });
+
+        await harness.service.onGroupMessage(atSelfWithImage('https://gchat.qpic.cn/a.png'));
+
+        const last = harness.model.calls[0]?.at(-1);
+
+        expect(typeof last?.content).toBe('string');
+    });
+
+    it('模型拒绝多模态时退回纯文本重试', async () => {
+        let attempts = 0;
+        const harness = createHarness(
+            {},
+            {
+                chat: async (messages) => {
+                    attempts += 1;
+
+                    if (messages.some((item) => Array.isArray(item.content))) {
+                        throw new LlmError('unsupported content', 400, false);
+                    }
+
+                    return { text: '纯文本也能答', attempts: 1 };
+                },
+            },
+        );
+
+        await harness.service.onGroupMessage(atSelfWithImage('https://gchat.qpic.cn/a.png'));
+
+        expect(attempts).toBe(2);
+        expect(harness.sender.sent).toHaveLength(1);
+        expect(textsOf(harness.sender.sent[0]?.message ?? [])[0]).toBe('纯文本也能答');
+    });
+
+    it('其它错误不会触发纯文本重试', async () => {
+        let attempts = 0;
+        const harness = createHarness(
+            {},
+            {
+                chat: async () => {
+                    attempts += 1;
+                    throw new LlmError('rate limited', 429, false);
+                },
+            },
+        );
+
+        await harness.service.onGroupMessage(atSelfWithImage('https://gchat.qpic.cn/a.png'));
+
+        expect(attempts).toBe(1);
+        expect(harness.sender.sent).toHaveLength(0);
     });
 });
 

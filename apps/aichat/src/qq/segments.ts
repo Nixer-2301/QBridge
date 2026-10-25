@@ -23,6 +23,8 @@ export interface ParsedGroupMessage {
     text: string;
     mentionedSelf: boolean;
     replyToId?: number;
+    /** 消息里的图片源（http 链接 / base64 / 本地路径），供视觉模型使用。 */
+    images: string[];
 }
 
 /** 非文本消息在上下文里的占位描述，让模型知道「这里有张图」而不是看到空白。 */
@@ -154,10 +156,24 @@ export function parseGroupMessage(
     let text = '';
     let mentionedSelf = false;
     let replyToId: number | undefined;
+    const images: string[] = [];
 
     for (const segment of segments) {
         if (segment.type === 'text') {
             text += readString(segment.data, 'text');
+            continue;
+        }
+
+        if (segment.type === 'image') {
+            const url = readString(segment.data, 'url').trim();
+            const file = readString(segment.data, 'file').trim();
+            const source = url.length > 0 ? url : file;
+
+            if (source.length > 0) {
+                images.push(source);
+            }
+
+            text += PLACEHOLDERS['image'] ?? '[图片]';
             continue;
         }
 
@@ -202,6 +218,7 @@ export function parseGroupMessage(
         senderName: senderDisplayName(event),
         text: normalizeMessageText(text),
         mentionedSelf,
+        images,
     };
 
     if (replyToId !== undefined) {

@@ -8,6 +8,7 @@ import type {
     LogLevel,
     OneBotConfig,
     PromptConfig,
+    VisionConfig,
 } from './types.ts';
 
 export class ConfigError extends Error {
@@ -278,6 +279,8 @@ function parseBot(raw: unknown): BotConfig {
             'groups',
             'owners',
             'maxReplyChars',
+            'splitParagraphs',
+            'maxReplySegments',
             'chunkDelayMs',
             'notifyOnError',
         ],
@@ -305,8 +308,21 @@ function parseBot(raw: unknown): BotConfig {
         },
         owners: readPositiveIntArray(source, 'owners', 'bot'),
         maxReplyChars: readNumber(source, 'maxReplyChars', 'bot', 1_200, 50, 4_500),
+        splitParagraphs: readBoolean(source, 'splitParagraphs', 'bot', true),
+        maxReplySegments: readNumber(source, 'maxReplySegments', 'bot', 4, 1, 10),
         chunkDelayMs: readNumber(source, 'chunkDelayMs', 'bot', 400, 0, 10_000),
         notifyOnError: readBoolean(source, 'notifyOnError', 'bot', false),
+    };
+}
+
+function parseVision(raw: unknown): VisionConfig {
+    const source = readObject(raw, 'vision');
+    assertKeys(source, ['enabled', 'maxImages', 'maxBytes'], 'vision');
+
+    return {
+        enabled: readBoolean(source, 'enabled', 'vision', true),
+        maxImages: readNumber(source, 'maxImages', 'vision', 4, 1, 10),
+        maxBytes: readNumber(source, 'maxBytes', 'vision', 5_242_880, 1_024, 20_000_000),
     };
 }
 
@@ -384,7 +400,7 @@ function parseLlm(raw: unknown): LlmConfig {
 
 function parsePrompt(raw: unknown): PromptConfig {
     const source = readObject(raw, 'prompt');
-    assertKeys(source, ['dir', 'main', 'perGroup', 'system'], 'prompt');
+    assertKeys(source, ['dir', 'main', 'perGroup', 'hotReload', 'system'], 'prompt');
 
     const dir = readString(source, 'dir', 'prompt', 'prompts').trim();
 
@@ -406,6 +422,7 @@ function parsePrompt(raw: unknown): PromptConfig {
         dir,
         main,
         perGroup: readStringRecord(source, 'perGroup', 'prompt'),
+        hotReload: readBoolean(source, 'hotReload', 'prompt', true),
     };
 
     // 兼容旧配置：只在主提示词文件缺失、需要自动生成时用一次。
@@ -421,7 +438,7 @@ function parsePrompt(raw: unknown): PromptConfig {
 export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.env): AppConfig {
     const expanded = expandEnv(rawInput, 'config', env);
     const root = readObject(expanded, 'config');
-    assertKeys(root, ['onebot', 'bot', 'context', 'llm', 'prompt', 'logging'], 'config');
+    assertKeys(root, ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'logging'], 'config');
 
     const logging = readObject(root['logging'], 'logging');
     assertKeys(logging, ['level'], 'logging');
@@ -438,6 +455,7 @@ export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.
         context: parseContext(root['context']),
         llm: parseLlm(root['llm']),
         prompt: parsePrompt(root['prompt']),
+        vision: parseVision(root['vision']),
         logging: { level },
     };
 }

@@ -17,7 +17,7 @@ QQ 客户端 ──Hook──> QBridge ──OneBot v11 WS──> 本项目 ─�
 - **多轮上下文**：每个群一份共享窗口（多人聊天），默认 **20 条 / 20000 tokens** 双上限，超出按「提问 + 回答」成对丢弃。
 - **发言人前缀**：上下文写成 `昵称: 内容`，模型知道群里谁在说话；也可关闭。
 - **系统提示词外置**：放在 `prompts/` 目录（`system.md` + `groups/<群号>.md` + `{{include}}` 片段），支持 `{botName}`、`{groupId}` 占位符，改完 `/reload` 生效，不用重启。
-- **像人一样回复**：引用触发消息、按 QQ 长度限制自动切分长回复、同群串行保证顺序、失败自动重试。
+- **像人一样回复**：引用触发消息、空行分段拆成多条消息（多段回复）、按 QQ 长度限制自动切分、同群串行保证顺序、失败自动重试。
 - **管理命令**：`/reset` 清空本群上下文、`/reload` 热重载配置（仅 `bot.owners` 里列出的账号可用）。
 - **可观测**：结构化日志记录连接、触发、耗时、失败原因；不打印密钥。
 - **零框架依赖**：只用 `@snowluma/sdk`（官方 OneBot 客户端），其余是 Node 内置能力。
@@ -188,6 +188,8 @@ npm run build && npm start
 | `groups.blacklist` | `[]` | 永不处理这些群，优先级高于白名单 |
 | `owners` | `[]` | 可以用 `/reset`、`/reload` 的 QQ 号 |
 | `maxReplyChars` | `1200` | 单条消息最大字数，超长自动切分（上限 4500） |
+| `splitParagraphs` | `true` | 空行分隔的段落拆成多条消息（真正的多段回复） |
+| `maxReplySegments` | `4` | 一次回复最多拆几条，超出的段落并回最后一条 |
 | `chunkDelayMs` | `400` | 分片之间的间隔，避免刷屏 |
 | `notifyOnError` | `false` | 模型调用失败时是否在群里提示一句 |
 
@@ -246,7 +248,8 @@ npm run build && npm start
 {
     "dir": "prompts",      // 提示词目录，相对启动目录（也可写绝对路径）
     "main": "system.md",   // 主提示词文件（相对 dir）
-    "perGroup": {}         // 可选：群号 -> 相对 dir 的路径，优先级最高
+    "perGroup": {},        // 可选：群号 -> 相对 dir 的路径，优先级最高
+    "hotReload": true      // 监听文件变化自动重载（默认开启）
 }
 ```
 
@@ -267,7 +270,9 @@ prompts/
 - 占位符：`{botName}`、`{groupId}`，在每次请求时替换。
 - 片段复用：`{{include:rules.md}}` 会把文件内容拼进来，最多 4 层；出现循环或指向 `prompts/` 之外的路径会直接报错并指出链路。
 - 文件读写：自动去掉 BOM、把 CRLF 归一成 LF；空提示词会报错，不会静默发一条空 system 消息。
-- 热更新：群里发 `@机器人 /reload`（需 `bot.owners`）会同时重载 `config.json` 和提示词文件；新增的 `groups/<群号>.md` 即时生效，改已有文件需 `/reload`。
+- 热更新：默认监听 `prompts/`（含 `groups/`），保存文件后约 0.3 秒自动重载，主提示词和群提示词都生效；保存到一半读到空文件会保留上一版并打 warn。`hotReload: false` 可关闭监听。
+- 手动重载：群里发 `@机器人 /reload`（需 `bot.owners`）会同时重载 `config.json` 和提示词文件。
+- 目录 / main 文件名 / hotReload 开关的改动需要重启进程（文件内容不需要）。
 - 兜底：`prompts/system.md` 不存在时会自动生成（若配置里还留着旧的 `prompt.system` 就用它，否则用内置默认值），并打一条 warn。
 - 旧配置的 `prompt.system` 仍能读入，但只用于「主文件缺失时生成文件」这一次；正常配置请删掉它。
 
@@ -279,6 +284,20 @@ prompts/
 - 不要输出 Markdown 标题/表格（QQ 不渲染，只会变成一堆井号）；
 - 需要「按群不同人设」时，复制一份 `system.md` 到 `groups/<群号>.md` 再改，不要挤在 JSON 里。
 
+### `vision`
+
+群消息里的图片会作为 OpenAI 兼容的多模态分段（`image_url`）发给模型，历史里仍保存 `[图片]` 占位符，不会把 base64 存进上下文。
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 是否把图片发给模型 |
+| `maxImages` | `4` | 单条消息最多带几张图 |
+| `maxBytes` | `5242880` | 单张内联图片（data URI）的体积上限，超出跳过 |
+
+- 图片来源只认三类：QBridge 给的 `https://…`（带 rkey 的链接）、`data:` URI、`base64://`；本地路径与 QQ 内部 file token 直接跳过（既不读本机文件，也不报错）。
+- 引用的图片只在**触发消息**上发送，不带历史图片，避免每轮都重复计费。
+- 端点拒绝多模态时（HTTP 400/415/422）会自动退回纯文本重试一次，并打一条 warn，不会让这条消息直接失败。
+- 关闭：`"vision": { "enabled": false }`。
 ### `logging`
 
 `level`：`debug` / `info` / `warn` / `error` / `silent`，默认 `info`。`debug` 会打印每条被忽略的消息和 token 用量。
@@ -319,7 +338,7 @@ node tools/mock-onebot.mjs
 ### 3. 自动化测试
 
 ```bash
-npm test          # 160 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
+npm test          # 182 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
 npm run typecheck
 ```
 
@@ -426,7 +445,9 @@ ai-chat/
 
 - 上下文只在内存，进程重启即清空（需要持久化可在 `ConversationStore` 后接 SQLite/Redis）。
 - 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
-- 不支持图片/语音内容理解：非文本消息只以占位符进入上下文。
+- 语音/视频/文件仍只以占位符进入上下文；图片已支持（见 `vision` 配置），但需要模型本身支持多模态。
 - 没有 Web 管理界面：改配置用文件 + `/reload`。
+
+
 
 

@@ -1,10 +1,12 @@
 import { message as segments } from '@snowluma/sdk';
 import type { AnyMessageSegment } from '@snowluma/sdk';
 import { splitReply } from './chunk.ts';
+import { buildImageParts } from './vision.ts';
 import type { ConfigStore } from '../config.ts';
 import type { Logger } from '../logger.ts';
+import { LlmError } from '../llm/client.ts';
 import type { LlmResult } from '../llm/client.ts';
-import { estimateChatTokens } from '../llm/tokens.ts';
+import { contentText, estimateChatTokens } from '../llm/tokens.ts';
 import type { ConversationStore } from '../memory/store.ts';
 import type { PromptSource } from '../prompt/store.ts';
 import type { ChatMessage, GroupsConfig, TriggerConfig } from '../types.ts';
@@ -64,8 +66,16 @@ const HELP_TEXT = ['可用命令：', '/reset 清空本群上下文（仅管理�
     '\n',
 );
 
-export function isGroupAllowed(groupId: number, groups: GroupsConfig): boolean {
-    if (groups.blacklist.includes(groupId)) {
+/** 端点明确表示请求体不合法时，才认为「不支持图片」，避免把限流/超时误判成图片问题。 */
+function isImageRejected(error: unknown): boolean {
+    if (!(error instanceof LlmError)) {
+        return false;
+    }
+
+    return error.status === 400 || error.status === 415 || error.status === 422;
+}
+
+export function isGroupAllowed(groupId: number, groups: GroupsConfig): boolean {    if (groups.blacklist.includes(groupId)) {
         return false;
     }
 
@@ -177,9 +187,26 @@ export class ChatService {
         const startedAt = Date.now();
 
         try {
-            const prompt = this.buildPrompt(parsed.groupId, history);
-            const result = await this.options.llm.chat(prompt);
-            const chunks = splitReply(result.text, config.bot.maxReplyChars);
+            const prompt = await this.buildPrompt(parsed.groupId, history, parsed.images);
+            let result;
+
+            try {
+                result = await this.options.llm.chat(prompt.messages);
+            } catch (error) {
+                // 有些 OpenAI 兼容端点不接受多模态 content；退回纯文本再试一次，别让整条消息失败。
+                if (!prompt.withImages || !isImageRejected(error)) {
+                    throw error;
+                }
+
+                logger.warn('模型似乎不接受图片输入，改为纯文本重试', error instanceof Error ? error.message : error);
+                const textOnly = await this.buildPrompt(parsed.groupId, history, []);
+                result = await this.options.llm.chat(textOnly.messages);
+            }
+
+            const chunks = splitReply(result.text, config.bot.maxReplyChars, {
+                splitParagraphs: config.bot.splitParagraphs,
+                maxSegments: config.bot.maxReplySegments,
+            });
 
             if (chunks.length === 0) {
                 logger.warn('模型返回内容为空，跳过发送');
@@ -246,7 +273,11 @@ export class ChatService {
         }
     }
 
-    private buildPrompt(groupId: number, snapshot: ChatMessage[]): ChatMessage[] {
+    private async buildPrompt(
+        groupId: number,
+        snapshot: ChatMessage[],
+        images: readonly string[],
+    ): Promise<{ messages: ChatMessage[]; withImages: boolean }> {
         const config = this.options.config.value;
         const systemTemplate = this.options.prompts.systemFor(groupId);
         const system = systemTemplate
@@ -263,7 +294,43 @@ export class ChatService {
             }
         }
 
-        return messages;
+        if (images.length === 0 || !config.vision.enabled) {
+            return { messages, withImages: false };
+        }
+
+        const parts = await buildImageParts(images, {
+            config: config.vision,
+            logger: this.options.logger,
+        });
+
+        if (parts.length === 0) {
+            return { messages, withImages: false };
+        }
+
+        const lastIndex = messages.length - 1;
+        const last = messages[lastIndex];
+
+        if (!last || last.role !== 'user') {
+            return { messages, withImages: false };
+        }
+
+        messages[lastIndex] = {
+            role: 'user',
+            content: [{ type: 'text', text: contentText(last.content) }, ...parts],
+        };
+
+        // 图片也占 token，挂上之后重新压一次预算（从最旧的历史开始丢）。
+        while (messages.length > 2 && estimateChatTokens(messages) > config.context.maxTokens) {
+            messages.splice(1, 1);
+
+            while (messages.length > 2 && messages[1]?.role === 'assistant') {
+                messages.splice(1, 1);
+            }
+        }
+
+        this.options.logger.info(`附带图片 ${parts.length} 张发给模型`, `群=${groupId}`);
+
+        return { messages, withImages: true };
     }
 
     private async handleCommand(parsed: ParsedGroupMessage): Promise<boolean> {

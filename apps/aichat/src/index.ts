@@ -129,6 +129,7 @@ async function main(): Promise<void> {
         baseDir: process.cwd(),
         logger: logger.child('prompt'),
     });
+    prompts.watch();
 
     const stats = { events: 0, lastReply: '—' };
     const sender = new SenderSlot();
@@ -201,6 +202,7 @@ async function main(): Promise<void> {
         clearInterval(statusTimer);
         clearInterval(sweepTimer);
         bot.stop();
+        prompts.close();
         tui?.stop();
         logHandle?.stream.end();
 

@@ -18,6 +18,10 @@ describe('parseConfig', () => {
         expect(config.prompt.dir).toBe('prompts');
         expect(config.prompt.main).toBe('system.md');
         expect(config.prompt.perGroup).toEqual({});
+        expect(config.prompt.hotReload).toBe(true);
+        expect(config.bot.splitParagraphs).toBe(true);
+        expect(config.bot.maxReplySegments).toBe(4);
+        expect(config.vision).toEqual({ enabled: true, maxImages: 4, maxBytes: 5_242_880 });
     });
 
     it('展开 ${ENV} 引用', () => {

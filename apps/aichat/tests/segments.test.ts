@@ -78,6 +78,27 @@ describe('parseGroupMessage', () => {
         expect(parsed.text).toBe('[图片][表情]看这个[卡片]');
     });
 
+    it('收集图片链接供视觉模型使用', () => {
+        const parsed = parseGroupMessage(
+            event({
+                message: [
+                    { type: 'image', data: { url: 'https://gchat.qpic.cn/1.png?rkey=x', file: 'abc.png' } },
+                    { type: 'text', data: { text: '看这个' } },
+                    { type: 'image', data: { file: 'def.png' } },
+                ],
+            }),
+        );
+
+        expect(parsed.images).toEqual(['https://gchat.qpic.cn/1.png?rkey=x', 'def.png']);
+        expect(parsed.text).toBe('[图片]看这个[图片]');
+    });
+
+    it('没有图片时 images 为空数组', () => {
+        const parsed = parseGroupMessage(event({ message: [{ type: 'text', data: { text: 'hi' } }] }));
+
+        expect(parsed.images).toEqual([]);
+    });
+
     it('记录被引用消息的 id', () => {
         const parsed = parseGroupMessage(
             event({ message: [{ type: 'reply', data: { id: '-42' } }, { type: 'text', data: { text: '对' } }] }),
