@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { showSplash } from './banner.ts';
 import { formatPreflight, runPreflight } from './check.ts';
+import { CooldownStore } from './chat/cooldowns.ts';
 import { FaceStore } from './chat/faces.ts';
 import { ChatService, SenderSlot } from './chat/service.ts';
 import { ConfigStore, resolveConfigPath } from './config.ts';
@@ -160,6 +161,8 @@ async function main(): Promise<void> {
         );
     }
 
+    const cooldowns = new CooldownStore(path.resolve('data/auto-replies.json'), logger.child('cooldown'));
+
     const stats = { events: 0, lastReply: '—' };
     const sender = new SenderSlot();
     const service = new ChatService({
@@ -169,6 +172,7 @@ async function main(): Promise<void> {
         sender,
         prompts,
         faces,
+        cooldowns,
         logger: logger.child('chat'),
         onActivity: (activity) => {
             if (activity.type === 'trigger') {
@@ -279,5 +283,6 @@ main().catch((error: unknown) => {
 
     process.exitCode = 1;
 });
+
 
 

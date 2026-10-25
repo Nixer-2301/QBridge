@@ -86,13 +86,14 @@
                     628101497
                 ],
                 "face": "是钢卷",
-                "cooldownSeconds": 60
+                "cooldownSeconds": 120
             }
         ]
     },    "logging": {
         "level": "info"
     }
 }
+
 
 
 

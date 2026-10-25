@@ -357,7 +357,7 @@ prompts/
             "face": "是钢卷",               // 商城表情的文字摘要
             "image": "",                    // 可选兜底：本地路径 / http(s) / base64
             "text": "",                     // 可选兜底：一句话
-            "cooldownSeconds": 60,          // 同群同规则冷却
+            "cooldownSeconds": 120,         // 同群同规则冷却（防刷屏/防被踢）
             "probability": 1                // 命中概率，1 = 必发
         }
     ]
@@ -374,6 +374,9 @@ prompts/
 
 兜底顺序：商城表情 → `image` → `text`。三者都没有（或图片读不到）时只写一条 warn，不发消息。
 `image` 支持本地文件（自动转 data URI，可跨机器）、http(s) 链接、`base64://`。
+
+冷却记录持久化在 `data/auto-replies.json`：**重启不会清零**，重启后仍然等满冷却才会再发。
+怕被踢就把 `cooldownSeconds` 调到 120 或更大；多段回复之间的间隔由 `bot.chunkDelayMs` 控制（默认 400ms，可调大到 800~1500ms）。
 
 ### `logging`
 
@@ -567,6 +570,7 @@ ai-chat/
 - 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
 - 语音/视频/文件仍只以占位符进入上下文；图片已支持（见 `vision` 配置），但需要模型本身支持多模态。
 - 没有 Web 管理界面：改配置用文件 + `/reload`。
+
 
 
 

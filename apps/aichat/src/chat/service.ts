@@ -1,6 +1,7 @@
 import { message as segments } from '@snowluma/sdk';
 import type { AnyMessageSegment } from '@snowluma/sdk';
 import { buildAutoReplySegments, cooldownKey, matchAutoReply } from './auto-reply.ts';
+import type { CooldownLookup } from './cooldowns.ts';
 import { splitReply } from './chunk.ts';
 import type { FaceStore } from './faces.ts';
 import { buildImageParts } from './vision.ts';
@@ -61,6 +62,8 @@ export interface ChatServiceOptions {
     prompts: PromptSource;
     /** 商城表情缓存（用于自动回发同一个表情包） */
     faces?: FaceStore;
+    /** 自动表情冷却（可持久化，避免重启后立刻又发） */
+    cooldowns?: CooldownLookup;
     /** 注入随机数，便于测试 probability */
     random?: () => number;
     sleep?: (ms: number) => Promise<void>;
@@ -128,11 +131,12 @@ export class ChatService {
     private readonly seenOrder: string[] = [];
     /** 每个群最近发出去的消息 id，用来识别「引用回复机器人」的触发方式。 */
     private readonly sentIds = new Map<number, number[]>();
-    /** 自动表情的冷却记录：规则索引:群号 → 上次发送时间 */
-    private readonly autoCooldowns = new Map<string, number>();
+    /** 自动表情的冷却记录：规则索引:群号 → 上次发送时间（默认内存，可由 options 注入持久化实现） */
+    private readonly autoCooldowns: CooldownLookup;
 
     constructor(options: ChatServiceOptions) {
         this.options = options;
+        this.autoCooldowns = options.cooldowns ?? new Map<string, number>();
     }
 
     async onGroupMessage(event: GroupMessageEventLike): Promise<void> {
@@ -606,6 +610,7 @@ export class ChatService {
         });
     }
 }
+
 
 
 

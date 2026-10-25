@@ -4,6 +4,7 @@ import type { AnyMessageSegment } from '@snowluma/sdk';
 import type { Logger } from '../logger.ts';
 import type { FaceInfo } from '../qq/segments.ts';
 import type { AutoReplyRuleConfig } from '../types.ts';
+import type { CooldownLookup } from './cooldowns.ts';
 
 const MIME_BY_EXT: Record<string, string> = {
     '.png': 'image/png',
@@ -35,7 +36,7 @@ export function cooldownKey(index: number, groupId: number): string {
 export function matchAutoReply(
     rules: readonly AutoReplyRuleConfig[],
     input: AutoReplyInput,
-    cooldowns: Map<string, number>,
+    cooldowns: CooldownLookup,
     now: number,
     random: () => number = Math.random,
 ): AutoReplyMatch | null {
@@ -138,3 +139,4 @@ export function buildAutoReplySegments(
 
     return null;
 }
+

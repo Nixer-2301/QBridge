@@ -896,3 +896,86 @@ describe('ChatService 自动表情', () => {
         expect(textsOf(harness.sender.sent[0]?.message ?? [])[0]).toContain('还没学到');
     });
 });
+
+describe('ChatService 自动表情冷却持久化', () => {
+    it('重启后两分钟内不会重复发送', async () => {
+        const fsx = await import('node:fs');
+        const osx = await import('node:os');
+        const pathx = await import('node:path');
+        const { CooldownStore } = await import('../src/chat/cooldowns.ts');
+        const { FaceStore } = await import('../src/chat/faces.ts');
+
+        const dir = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'qb-persist-'));
+        const cooldowns = new CooldownStore(pathx.join(dir, 'auto-replies.json'), logger);
+        const faces = new FaceStore(pathx.join(dir, 'faces.json'), logger);
+
+        faces.remember([
+            {
+                summary: '是钢卷',
+                emojiId: 'abc123def456',
+                emojiPackageId: 42,
+                key: 'k',
+                url: '',
+            },
+        ]);
+
+        const rules = {
+            enabled: true,
+            rules: [
+                {
+                    userIds: [1_609_403_959],
+                    groupIds: [GROUP_ID],
+                    face: '是钢卷',
+                    cooldownSeconds: 120,
+                },
+            ],
+        };
+        const first = createHarness({ autoReplies: rules }, { faces });
+        const firstService = new ChatService({
+            config: first.config,
+            store: first.store,
+            llm: first.model,
+            sender: first.sender,
+            prompts: { systemFor: () => '你是测试助手。' },
+            faces,
+            cooldowns,
+            logger,
+        });
+
+        await firstService.onGroupMessage(
+            event({
+                message_id: -200,
+                user_id: 1_609_403_959,
+                message: [{ type: 'text', data: { text: '冲' } }],
+            }),
+        );
+
+        expect(first.sender.sent).toHaveLength(1);
+
+        // 模拟重启：新 service + 新 store（同一份冷却文件）
+        const restarted = new CooldownStore(pathx.join(dir, 'auto-replies.json'), logger);
+        const second = createHarness({ autoReplies: rules }, { faces });
+        const secondService = new ChatService({
+            config: second.config,
+            store: second.store,
+            llm: second.model,
+            sender: second.sender,
+            prompts: { systemFor: () => '你是测试助手。' },
+            faces,
+            cooldowns: restarted,
+            logger,
+        });
+
+        await secondService.onGroupMessage(
+            event({
+                message_id: -201,
+                user_id: 1_609_403_959,
+                message: [{ type: 'text', data: { text: '再冲' } }],
+            }),
+        );
+
+        expect(second.sender.sent).toHaveLength(0);
+
+        fsx.rmSync(dir, { recursive: true, force: true });
+    });
+});
