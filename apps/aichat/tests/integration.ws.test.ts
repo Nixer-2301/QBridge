@@ -185,7 +185,14 @@ async function startBot(port: number): Promise<{
     };
 
     const sender = new SenderSlot();
-    const service = new ChatService({ config, store, llm: model, sender, logger });
+    const service = new ChatService({
+        config,
+        store,
+        llm: model,
+        sender,
+        prompts: { systemFor: () => '你是测试机器人。' },
+        logger,
+    });
     const bot = await startQQBot({ onebot: appConfig.onebot, service, sender, logger });
 
     cleanups.push(() => bot.stop());
@@ -266,3 +273,5 @@ describe('WebSocket 链路', () => {
         expect(sendAction.params['message']).toEqual([{ type: 'text', data: { text: '主动消息' } }]);
     });
 });
+
+

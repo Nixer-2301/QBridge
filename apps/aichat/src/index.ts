@@ -7,6 +7,7 @@ import { createLogSink, openLogFile } from './log-sink.ts';
 import { createLogger } from './logger.ts';
 import { LlmClient } from './llm/client.ts';
 import { ConversationStore } from './memory/store.ts';
+import { PromptStore } from './prompt/store.ts';
 import { startQQBot } from './qq/bot.ts';
 import { Tui } from './tui/tui.ts';
 
@@ -122,6 +123,13 @@ async function main(): Promise<void> {
         logger: logger.child('llm'),
     });
 
+    // 系统提示词来自 prompts/ 目录（可按群覆盖），/reload 时一并重新读取。
+    const prompts = new PromptStore({
+        config: settings.prompt,
+        baseDir: process.cwd(),
+        logger: logger.child('prompt'),
+    });
+
     const stats = { events: 0, lastReply: '—' };
     const sender = new SenderSlot();
     const service = new ChatService({
@@ -129,6 +137,7 @@ async function main(): Promise<void> {
         store,
         llm,
         sender,
+        prompts,
         logger: logger.child('chat'),
         onActivity: (activity) => {
             if (activity.type === 'trigger') {

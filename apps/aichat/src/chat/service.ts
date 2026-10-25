@@ -2,11 +2,11 @@ import { message as segments } from '@snowluma/sdk';
 import type { AnyMessageSegment } from '@snowluma/sdk';
 import { splitReply } from './chunk.ts';
 import type { ConfigStore } from '../config.ts';
-import { ConfigError } from '../config.ts';
 import type { Logger } from '../logger.ts';
 import type { LlmResult } from '../llm/client.ts';
 import { estimateChatTokens } from '../llm/tokens.ts';
 import type { ConversationStore } from '../memory/store.ts';
+import type { PromptSource } from '../prompt/store.ts';
 import type { ChatMessage, GroupsConfig, TriggerConfig } from '../types.ts';
 import type { GroupMessageEventLike, ParsedGroupMessage } from '../qq/segments.ts';
 import { formatForHistory, parseGroupMessage } from '../qq/segments.ts';
@@ -53,6 +53,8 @@ export interface ChatServiceOptions {
     llm: ChatModel;
     sender: GroupSender;
     logger: Logger;
+    /** 系统提示词来源（文件驱动，可按群覆盖）。 */
+    prompts: PromptSource;
     sleep?: (ms: number) => Promise<void>;
     onActivity?: (activity: ChatActivity) => void;
 }
@@ -246,8 +248,7 @@ export class ChatService {
 
     private buildPrompt(groupId: number, snapshot: ChatMessage[]): ChatMessage[] {
         const config = this.options.config.value;
-        const override = config.prompt.perGroup[String(groupId)];
-        const systemTemplate = override ?? config.prompt.system;
+        const systemTemplate = this.options.prompts.systemFor(groupId);
         const system = systemTemplate
             .replace(/\{botName\}/g, config.bot.name)
             .replace(/\{groupId\}/g, String(groupId));
@@ -300,12 +301,13 @@ export class ChatService {
 
         try {
             this.options.config.reload();
-            await this.sendText(parsed, '配置已重新加载。');
-            this.options.logger.info('配置已通过 /reload 重新加载');
+            this.options.prompts.reload?.();
+            await this.sendText(parsed, '配置与提示词已重新加载。');
+            this.options.logger.info('配置与提示词已通过 /reload 重新加载');
         } catch (error) {
-            const reason = error instanceof ConfigError ? error.message : String(error);
-            this.options.logger.error('配置重新加载失败', error);
-            await this.sendText(parsed, `配置加载失败：${reason}`);
+            const reason = error instanceof Error ? error.message : String(error);
+            this.options.logger.error('重新加载失败', error);
+            await this.sendText(parsed, `重新加载失败：${reason}`);
         }
 
         return true;

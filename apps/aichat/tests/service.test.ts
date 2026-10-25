@@ -25,7 +25,13 @@ interface Harness {
 
 function createHarness(
     overrides: Record<string, unknown> = {},
-    options: { reply?: string | ((messages: ChatMessage[]) => string); failWith?: Error; filePath?: string } = {},
+    options: {
+        reply?: string | ((messages: ChatMessage[]) => string);
+        failWith?: Error;
+        filePath?: string;
+        systemFor?: (groupId: number) => string;
+        reloadPrompts?: () => void;
+    } = {},
 ): Harness {
     const appConfig: AppConfig = parseConfig(overrides, {});
     const config = new ConfigStore(options.filePath ?? path.resolve('config/config.json'), appConfig);
@@ -70,6 +76,10 @@ function createHarness(
         store,
         llm: model,
         sender,
+        prompts: {
+            systemFor: options.systemFor ?? (() => '你是测试助手。'),
+            reload: options.reloadPrompts,
+        },
         logger,
         sleep: async () => {},
     });
@@ -286,18 +296,15 @@ describe('ChatService 上下文', () => {
         expect(prompt.length).toBeLessThan(17);
     });
 
-    it('系统提示词支持 {botName} 占位与按群覆盖', async () => {
-        const harness = createHarness({
-            bot: { name: '阿桥' },
-            prompt: {
-                system: '你是{botName}，群号{groupId}',
-                perGroup: { [String(GROUP_ID)]: '本群只聊游戏，你是{botName}' },
-            },
-        });
+    it('系统提示词来自提示词文件，并替换 {botName}/{groupId} 占位符', async () => {
+        const harness = createHarness(
+            { bot: { name: '阿桥' } },
+            { systemFor: (groupId) => `本群 ${groupId} 只聊游戏，你是{botName}` },
+        );
 
         await harness.service.onGroupMessage(atSelf('开黑吗'));
 
-        expect(harness.model.calls[0]?.[0]?.content).toBe('本群只聊游戏，你是阿桥');
+        expect(harness.model.calls[0]?.[0]?.content).toBe(`本群 ${GROUP_ID} 只聊游戏，你是阿桥`);
     });
 
     it('可以关闭发言人名字前缀', async () => {
@@ -417,6 +424,7 @@ describe('ChatService 管理命令', () => {
             config,
             store: harness.store,
             llm: harness.model,
+            prompts: { systemFor: () => '你是测试助手。' },
             sender: harness.sender,
             logger,
         });
@@ -426,6 +434,37 @@ describe('ChatService 管理命令', () => {
 
         expect(config.value.bot.name).toBe('新名字');
         expect(textsOf(harness.sender.sent.at(-1)?.message ?? [])[0]).toContain('已重新加载');
+
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('管理员 /reload 同时重新加载提示词', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qb-aichat-'));
+        const configPath = path.join(dir, 'config.json');
+
+        fs.writeFileSync(configPath, JSON.stringify({ bot: { owners: [USER_ID] } }), 'utf8');
+
+        const config = ConfigStore.load(configPath);
+        const harness = createHarness({}, { filePath: configPath });
+        let reloaded = 0;
+        const service = new ChatService({
+            config,
+            store: harness.store,
+            llm: harness.model,
+            sender: harness.sender,
+            prompts: {
+                systemFor: () => '你是测试助手。',
+                reload: () => {
+                    reloaded += 1;
+                },
+            },
+            logger,
+        });
+
+        await service.onGroupMessage(atSelf('/reload', -7));
+
+        expect(reloaded).toBe(1);
+        expect(textsOf(harness.sender.sent.at(-1)?.message ?? [])[0]).toContain('提示词已重新加载');
 
         fs.rmSync(dir, { recursive: true, force: true });
     });
@@ -442,6 +481,7 @@ describe('ChatService 管理命令', () => {
             config,
             store: harness.store,
             llm: harness.model,
+            prompts: { systemFor: () => '你是测试助手。' },
             sender: harness.sender,
             logger,
         });
@@ -449,7 +489,7 @@ describe('ChatService 管理命令', () => {
         fs.writeFileSync(configPath, '{ invalid json', 'utf8');
         await service.onGroupMessage(atSelf('/reload', -6));
 
-        expect(textsOf(harness.sender.sent.at(-1)?.message ?? [])[0]).toContain('配置加载失败');
+        expect(textsOf(harness.sender.sent.at(-1)?.message ?? [])[0]).toContain('重新加载失败');
 
         fs.rmSync(dir, { recursive: true, force: true });
     });
@@ -496,3 +536,5 @@ describe('SenderSlot', () => {
         expect(send).toHaveBeenCalledWith(GROUP_ID, [{ type: 'text', data: { text: 'hi' } }]);
     });
 });
+
+

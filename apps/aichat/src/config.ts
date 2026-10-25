@@ -384,18 +384,38 @@ function parseLlm(raw: unknown): LlmConfig {
 
 function parsePrompt(raw: unknown): PromptConfig {
     const source = readObject(raw, 'prompt');
-    assertKeys(source, ['system', 'perGroup'], 'prompt');
+    assertKeys(source, ['dir', 'main', 'perGroup', 'system'], 'prompt');
 
-    const system = readString(source, 'system', 'prompt', DEFAULT_SYSTEM_PROMPT);
+    const dir = readString(source, 'dir', 'prompt', 'prompts').trim();
 
-    if (system.trim().length === 0) {
-        throw new ConfigError('prompt.system 不能为空');
+    if (dir.length === 0) {
+        throw new ConfigError('prompt.dir 不能为空');
     }
 
-    return {
-        system,
+    const main = readString(source, 'main', 'prompt', 'system.md').trim();
+
+    if (main.length === 0) {
+        throw new ConfigError('prompt.main 不能为空');
+    }
+
+    if (path.isAbsolute(main) || /^[A-Za-z]:/.test(main)) {
+        throw new ConfigError('prompt.main 必须是相对提示词目录的路径，例如 system.md');
+    }
+
+    const config: PromptConfig = {
+        dir,
+        main,
         perGroup: readStringRecord(source, 'perGroup', 'prompt'),
     };
+
+    // 兼容旧配置：只在主提示词文件缺失、需要自动生成时用一次。
+    const legacy = readString(source, 'system', 'prompt', '').trim();
+
+    if (legacy.length > 0) {
+        config.system = legacy;
+    }
+
+    return config;
 }
 
 export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.env): AppConfig {

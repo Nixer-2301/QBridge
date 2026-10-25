@@ -15,7 +15,9 @@ describe('parseConfig', () => {
         expect(config.llm.baseUrl).toBe('https://api.deepseek.com/v1');
         expect(config.llm.model).toBe('deepseek-chat');
         expect(config.logging.level).toBe('info');
-        expect(config.prompt.system.length).toBeGreaterThan(20);
+        expect(config.prompt.dir).toBe('prompts');
+        expect(config.prompt.main).toBe('system.md');
+        expect(config.prompt.perGroup).toEqual({});
     });
 
     it('展开 ${ENV} 引用', () => {
@@ -73,10 +75,27 @@ describe('parseConfig', () => {
         expect(config.llm.baseUrl).toBe('https://api.example.com/v1');
     });
 
-    it('保留分组系统提示词覆盖', () => {
-        const config = parseConfig({ prompt: { perGroup: { '123456': '你只聊游戏' } } }, {});
+    it('提示词改由文件驱动，旧的 system 字段仍可读入（仅用于迁移）', () => {
+        const fromFiles = parseConfig({ prompt: { dir: 'prompt-files', main: 'main.md' } }, {});
 
-        expect(config.prompt.perGroup['123456']).toBe('你只聊游戏');
+        expect(fromFiles.prompt.dir).toBe('prompt-files');
+        expect(fromFiles.prompt.main).toBe('main.md');
+        expect(fromFiles.prompt.system).toBeUndefined();
+
+        const legacy = parseConfig({ prompt: { system: '旧提示词' } }, {});
+
+        expect(legacy.prompt.system).toBe('旧提示词');
+    });
+
+    it('拒绝绝对路径的主提示词文件', () => {
+        expect(() => parseConfig({ prompt: { main: 'C:/x.md' } }, {})).toThrow(/相对提示词目录/);
+        expect(() => parseConfig({ prompt: { main: '' } }, {})).toThrow(/不能为空/);
+    });
+
+    it('保留分组系统提示词覆盖', () => {
+        const config = parseConfig({ prompt: { perGroup: { '123456': 'groups/game.md' } } }, {});
+
+        expect(config.prompt.perGroup['123456']).toBe('groups/game.md');
     });
 });
 

@@ -76,9 +76,14 @@ export interface LlmConfig {
 }
 
 export interface PromptConfig {
-    system: string;
-    /** 按群覆盖系统提示词，键是群号。 */
+    /** 提示词目录：相对进程工作目录，也可写绝对路径。 */
+    dir: string;
+    /** 主提示词文件（相对 dir）。 */
+    main: string;
+    /** 按群覆盖：群号 -> 相对 dir 的文件路径；留空则自动匹配 `groups/<群号>.md`。 */
     perGroup: Record<string, string>;
+    /** @deprecated 旧的内联提示词，仅在主提示词文件缺失时用于自动生成它。 */
+    system?: string;
 }
 
 export interface AppConfig {
