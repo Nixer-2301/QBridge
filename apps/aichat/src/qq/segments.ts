@@ -164,6 +164,17 @@ export function parseGroupMessage(
             continue;
         }
 
+        if (segment.type === 'mface') {
+            // 商城表情带文字摘要（例如「是钢卷」），比统一的 [表情] 更有信息量。
+            const summary =
+                readString(segment.data, 'summary').trim() ||
+                readString(segment.data, 'text').trim() ||
+                readString(segment.data, 'name').trim();
+
+            text += summary.length > 0 ? `[表情:${summary}]` : '[表情]';
+            continue;
+        }
+
         if (segment.type === 'image') {
             const url = readString(segment.data, 'url').trim();
             const file = readString(segment.data, 'file').trim();

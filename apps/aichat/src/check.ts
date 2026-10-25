@@ -125,6 +125,44 @@ export async function runPreflight(options: {
             : '已关闭',
     });
 
+    if (settings.github.enabled && settings.github.targets.length > 0) {
+        try {
+            const token = settings.github.token;
+
+            for (const target of settings.github.targets) {
+                const response = await withTimeout(
+                    fetch(`https://api.github.com/repos/${target.repo}`, {
+                        headers: {
+                            'user-agent': 'qbridge-aichat',
+                            accept: 'application/vnd.github+json',
+                            ...(token ? { authorization: `Bearer ${token}` } : {}),
+                        },
+                    }),
+                    15_000,
+                    'GitHub 检查',
+                );
+
+                if (!response.ok) {
+                    throw new Error(`${target.repo} → HTTP ${response.status}`);
+                }
+            }
+
+            items.push({
+                label: 'GitHub',
+                ok: true,
+                detail: settings.github.targets
+                    .map((target) => `${target.repo}（${target.kinds.join('+')}→${target.groupIds.join(',')}）`)
+                    .join(' '),
+            });
+        } catch (error) {
+            items.push({
+                label: 'GitHub',
+                ok: false,
+                detail: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
     return items;
 }
 

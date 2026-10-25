@@ -20,8 +20,16 @@ describe('parseConfig', () => {
         expect(config.prompt.perGroup).toEqual({});
         expect(config.prompt.hotReload).toBe(true);
         expect(config.bot.splitParagraphs).toBe(true);
+        expect(config.bot.sentenceSplitAt).toBe(40);
         expect(config.bot.maxReplySegments).toBe(4);
         expect(config.vision).toEqual({ enabled: true, maxImages: 4, maxBytes: 5_242_880 });
+        expect(config.github).toEqual({
+            enabled: false,
+            intervalSeconds: 300,
+            stateFile: 'data/github-state.json',
+            postExisting: false,
+            targets: [],
+        });
     });
 
     it('展开 ${ENV} 引用', () => {
@@ -101,6 +109,56 @@ describe('parseConfig', () => {
 
         expect(config.prompt.perGroup['123456']).toBe('groups/game.md');
     });
+
+    it('解析 GitHub 监听配置', () => {
+        const config = parseConfig(
+            {
+                github: {
+                    enabled: true,
+                    intervalSeconds: 600,
+                    targets: [
+                        {
+                            repo: 'rikkahub/rikkahub',
+                            groupIds: [628101497],
+                            kinds: ['release', 'commit'],
+                            template: { release: '新版本 {tag}' },
+                        },
+                    ],
+                },
+            },
+            {},
+        );
+
+        expect(config.github.enabled).toBe(true);
+        expect(config.github.intervalSeconds).toBe(600);
+        expect(config.github.targets[0]).toMatchObject({
+            repo: 'rikkahub/rikkahub',
+            groupIds: [628101497],
+            kinds: ['release', 'commit'],
+        });
+    });
+
+    it('校验 GitHub 目标配置', () => {
+        expect(() =>
+            parseConfig({ github: { targets: [{ repo: 'not-a-repo', groupIds: [1] }] } }, {}),
+        ).toThrow(/owner\/repo/);
+        expect(() =>
+            parseConfig({ github: { targets: [{ repo: 'a/b', groupIds: [] }] } }, {}),
+        ).toThrow(/至少要有一个群号/);
+        expect(() =>
+            parseConfig({
+                github: { targets: [{ repo: 'a/b', groupIds: [1], kinds: ['tag'] }] },
+            }, {}),
+        ).toThrow(/release 或 commit/);
+        expect(() =>
+            parseConfig({
+                github: {
+                    targets: [{ repo: 'a/b', groupIds: [1], template: { push: 'x' } }],
+                },
+            }, {}),
+        ).toThrow(/未知事件/);
+        expect(() => parseConfig({ github: { intervalSeconds: 5 } }, {})).toThrow(/intervalSeconds/);
+    });
 });
 
 describe('resolveConfigPath', () => {
@@ -118,3 +176,4 @@ describe('resolveConfigPath', () => {
         expect(() => resolveConfigPath(['--config'], {})).toThrow(/路径/);
     });
 });
+

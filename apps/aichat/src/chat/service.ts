@@ -205,6 +205,7 @@ export class ChatService {
 
             const chunks = splitReply(result.text, config.bot.maxReplyChars, {
                 splitParagraphs: config.bot.splitParagraphs,
+                sentenceSplitAt: config.bot.sentenceSplitAt,
                 maxSegments: config.bot.maxReplySegments,
             });
 
@@ -435,3 +436,5 @@ export class ChatService {
         });
     }
 }
+
+

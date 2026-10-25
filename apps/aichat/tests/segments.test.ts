@@ -99,6 +99,19 @@ describe('parseGroupMessage', () => {
         expect(parsed.images).toEqual([]);
     });
 
+    it('商城表情带上文字摘要，普通表情仍是 [表情]', () => {
+        const parsed = parseGroupMessage(
+            event({
+                message: [
+                    { type: 'mface', data: { summary: '是钢卷', text: '是钢卷' } },
+                    { type: 'face', data: { id: '14' } },
+                ],
+            }),
+        );
+
+        expect(parsed.text).toBe('[表情:是钢卷][表情]');
+    });
+
     it('记录被引用消息的 id', () => {
         const parsed = parseGroupMessage(
             event({ message: [{ type: 'reply', data: { id: '-42' } }, { type: 'text', data: { text: '对' } }] }),

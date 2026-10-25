@@ -11,6 +11,7 @@ import { ConversationStore } from './memory/store.ts';
 import { PromptStore } from './prompt/store.ts';
 import { startQQBot } from './qq/bot.ts';
 import { Tui } from './tui/tui.ts';
+import { GithubWatcher } from './watch/github.ts';
 
 const SWEEP_INTERVAL_MS = 5 * 60 * 1_000;
 const STATUS_INTERVAL_MS = 1_000;
@@ -176,8 +177,7 @@ async function main(): Promise<void> {
     });
 
     const startedAt = Date.now();
-    const account = bot.nickname
-        ? `${bot.nickname}(${bot.selfId ?? '?'})`
+    const account = bot.nickname        ? `${bot.nickname}(${bot.selfId ?? '?'})`
         : bot.selfId !== undefined
           ? String(bot.selfId)
           : '未连接';
@@ -208,6 +208,16 @@ async function main(): Promise<void> {
     }, SWEEP_INTERVAL_MS);
     sweepTimer.unref();
 
+    // GitHub 仓库监听：新 Release / 提交 → 发到指定群。
+    const github = new GithubWatcher({
+        config: settings.github,
+        sender,
+        logger: logger.child('github'),
+        statePath: path.resolve(settings.github.stateFile),
+        maxReplyChars: settings.bot.maxReplyChars,
+    });
+    github.start();
+
     let stopping = false;
     const shutdown = (reason: string) => {
         if (stopping) {
@@ -218,6 +228,7 @@ async function main(): Promise<void> {
         logger.info(`正在退出（${reason}）`);
         clearInterval(statusTimer);
         clearInterval(sweepTimer);
+        github.stop();
         bot.stop();
         prompts.close();
         tui?.stop();

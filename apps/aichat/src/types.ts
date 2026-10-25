@@ -49,6 +49,8 @@ export interface BotConfig {
     maxReplyChars: number;
     /** 空行分隔的段落是否拆成多条消息发送（多段回复）。 */
     splitParagraphs: boolean;
+    /** 整段没有换行、又超过这个字数时按句号拆成多条；0 关闭。 */
+    sentenceSplitAt: number;
     /** 一次回复最多拆成几条消息，超出的段落并回最后一条。 */
     maxReplySegments: number;
     /** 多条分片之间的间隔毫秒数。 */
@@ -101,6 +103,32 @@ export interface PromptConfig {
     system?: string;
 }
 
+export type GithubKind = 'release' | 'commit';
+
+export interface GithubTargetConfig {
+    /** owner/repo */
+    repo: string;
+    /** 发到哪些群 */
+    groupIds: number[];
+    /** 监听哪类事件 */
+    kinds: GithubKind[];
+    /** 按事件覆盖默认模板，可用占位符见 README */
+    template?: Partial<Record<GithubKind, string>>;
+}
+
+export interface GithubConfig {
+    enabled: boolean;
+    /** 轮询间隔（秒），最小 60 */
+    intervalSeconds: number;
+    /** 可选 GitHub token，用来提高 API 限额 */
+    token?: string;
+    /** 记录已推送事件 id 的文件，避免重启后重复发 */
+    stateFile: string;
+    /** 首次运行是否补发当前最新事件（默认 false） */
+    postExisting: boolean;
+    targets: GithubTargetConfig[];
+}
+
 export interface AppConfig {
     onebot: OneBotConfig;
     bot: BotConfig;
@@ -108,6 +136,7 @@ export interface AppConfig {
     llm: LlmConfig;
     prompt: PromptConfig;
     vision: VisionConfig;
+    github: GithubConfig;
     logging: { level: LogLevel };
 }
 
@@ -122,3 +151,5 @@ export interface ChatMessage {
     /** 纯文本，或 OpenAI 兼容的多模态分段（文本 + 图片）。 */
     content: string | ContentPart[];
 }
+
+

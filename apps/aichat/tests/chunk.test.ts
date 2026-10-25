@@ -16,19 +16,41 @@ describe('splitReply', () => {
         expect(chunks).toEqual(['第一段', '第二段', '第三段']);
     });
 
-    it('关闭 splitParagraphs 后段落合并为一条', () => {
-        const chunks = splitReply('第一段\n\n第二段\n\n第三段', 1_200, { splitParagraphs: false });
+    it('单换行也视为分段（模型常这样分行）', () => {
+        const chunks = splitReply('第一行\n第二行\n第三行', 1_200);
+
+        expect(chunks).toEqual(['第一行', '第二行', '第三行']);
+    });
+
+    it('关闭 splitParagraphs 后合并为一条，保留段内换行', () => {
+        const chunks = splitReply('第一段\n\n第二段', 1_200, { splitParagraphs: false });
 
         expect(chunks).toHaveLength(1);
         expect(chunks[0]).toContain('第一段');
-        expect(chunks[0]).toContain('第三段');
+        expect(chunks[0]).toContain('第二段');
     });
 
-    it('段内的单换行保留在同一条消息里', () => {
-        const chunks = splitReply('第一行\n第二行\n\n第二段', 1_200);
+    it('整段没有换行但超过 sentenceSplitAt 时按句号拆', () => {
+        const text = '今天天气不错，适合出门走走。不过风有点大，记得带件外套。晚上可能会下雨。';
+        const chunks = splitReply(text, 1_200, { sentenceSplitAt: 10 });
 
-        expect(chunks[0]).toBe('第一行\n第二行');
-        expect(chunks[1]).toBe('第二段');
+        expect(chunks.length).toBeGreaterThan(1);
+        expect(chunks.join('')).toBe(text);
+    });
+
+    it('sentenceSplitAt=0 时不按句号拆', () => {
+        const text = '第一句。第二句。第三句。';
+        const chunks = splitReply(text, 1_200, { sentenceSplitAt: 0 });
+
+        expect(chunks).toEqual([text]);
+    });
+
+    it('按句号拆分时受 maxSegments 限制', () => {
+        const text = Array.from({ length: 8 }, (_unused, index) => `第${index}句话说完了。`).join('');
+        const chunks = splitReply(text, 1_200, { sentenceSplitAt: 5, maxSegments: 3 });
+
+        expect(chunks.length).toBeLessThanOrEqual(3);
+        expect(chunks.join('')).toBe(text);
     });
 
     it('段落数超过 maxSegments 时并回最后一条', () => {
@@ -63,7 +85,7 @@ describe('splitReply', () => {
     });
 
     it('超长单行也能切开', () => {
-        const chunks = splitReply('啊'.repeat(1_000), 120);
+        const chunks = splitReply('啊'.repeat(1_000), 120, { sentenceSplitAt: 0 });
 
         expect(chunks.length).toBeGreaterThan(5);
 
@@ -76,7 +98,7 @@ describe('splitReply', () => {
 
     it('优先在标点处断开', () => {
         const text = `${'甲'.repeat(30)}。${'乙'.repeat(30)}。${'丙'.repeat(30)}`;
-        const chunks = splitReply(text, 40);
+        const chunks = splitReply(text, 40, { sentenceSplitAt: 0 });
 
         for (const chunk of chunks.slice(0, -1)) {
             expect(chunk.endsWith('。')).toBe(true);

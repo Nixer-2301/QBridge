@@ -1,10 +1,16 @@
 const BREAK_CHARS = new Set(['。', '！', '？', '!', '?', '；', ';', '，', ',', '、', ' ', '\n']);
+const SENTENCE_END = /(?<=[。！？!?…])\s*/u;
 
 export interface SplitReplyOptions {
-    /** 空行分隔的段落是否拆成多条消息（真正的多段回复）。默认 true。 */
+    /** 换行是否作为分段边界（真正的多段回复）。默认 true。 */
     splitParagraphs?: boolean;
     /** 一次回复最多拆成几条消息，超出的段落并回最后一条。默认 4。 */
     maxSegments?: number;
+    /**
+     * 整段回复没有任何换行时，超过这个字数就按句号切分。
+     * 0 表示关闭。默认 80：既能让多句回复拆成几条，又不会把一句话切碎。
+     */
+    sentenceSplitAt?: number;
 }
 
 function hardSplit(text: string, limit: number): string[] {
@@ -91,9 +97,50 @@ function splitBlock(block: string, limit: number): string[] {
 }
 
 /**
+ * 整段没有换行时按句子切：把句子按字符预算装进若干个分组，避免一坨长句。
+ * 只有一句时不切（切了也不自然）。
+ */
+function splitBySentences(text: string, targetGroups: number): string[] {
+    const sentences = text
+        .split(SENTENCE_END)
+        .map((sentence) => sentence.trim())
+        .filter((sentence) => sentence.length > 0);
+
+    if (sentences.length <= 1) {
+        return [text.trim()];
+    }
+
+    const groups = Math.max(2, Math.min(targetGroups, sentences.length));
+    const budget = Math.ceil(text.length / groups);
+    const result: string[] = [];
+    let current = '';
+
+    for (const sentence of sentences) {
+        const candidate = current.length === 0 ? sentence : `${current}${sentence}`;
+
+        if (current.length > 0 && candidate.length > budget && result.length < groups - 1) {
+            result.push(current);
+            current = sentence;
+            continue;
+        }
+
+        current = candidate;
+    }
+
+    if (current.length > 0) {
+        result.push(current);
+    }
+
+    return result;
+}
+
+/**
  * 把模型回复切成符合 QQ 单条消息长度限制的片段。
- * 开启 `splitParagraphs` 时，空行分隔的段落各自成为一条消息（多段回复）；
- * 段落数超过 `maxSegments` 时把后面的段落并进最后一条，避免刷屏。
+ *
+ * - 换行（单换行或空行）默认都视为分段边界，每段单独发一条消息；
+ * - 整段没有换行且超过 `sentenceSplitAt` 时，按句号切成 2~maxSegments 条；
+ * - 段落数超过 `maxSegments` 时把后面的段落并进最后一条，避免刷屏；
+ * - 最后仍按 `maxChars` 硬切，保证不超 QQ 单条上限。
  */
 export function splitReply(text: string, maxChars: number, options: SplitReplyOptions = {}): string[] {
     const limit = Math.max(1, Math.floor(maxChars));
@@ -103,29 +150,35 @@ export function splitReply(text: string, maxChars: number, options: SplitReplyOp
         return [];
     }
 
+    const maxSegments = Math.max(1, Math.floor(options.maxSegments ?? 4));
+    const sentenceSplitAt = Math.max(0, Math.floor(options.sentenceSplitAt ?? 80));
     const blocks =
         options.splitParagraphs === false
             ? [normalized]
             : normalized
-                  .split(/\n\s*\n/)
+                  .split(/\n+/)
                   .map((block) => block.trim())
                   .filter((block) => block.length > 0);
 
-    if (blocks.length <= 1) {
-        return splitBlock(normalized, limit);
+    let segments: string[] = blocks.length > 0 ? blocks : [normalized];
+
+    // 只有一整段、又比一句话长得多：按句号拆，模拟真人连发几条。
+    if (segments.length === 1 && sentenceSplitAt > 0) {
+        const single = segments[0] ?? '';
+
+        if (single.length >= sentenceSplitAt && !single.includes('\n')) {
+            const desired = Math.min(maxSegments, Math.max(2, Math.ceil(single.length / sentenceSplitAt)));
+
+            segments = splitBySentences(single, desired);
+        }
     }
 
-    const maxSegments = Math.max(1, Math.floor(options.maxSegments ?? 4));
-    const segments: string[] = [];
+    if (segments.length > maxSegments) {
+        // 超出的段落并进最后一条，最后统一按长度硬切。
+        const head = segments.slice(0, maxSegments - 1);
+        const tail = segments.slice(maxSegments - 1).join('\n\n');
 
-    for (const block of blocks) {
-        if (segments.length < maxSegments) {
-            segments.push(block);
-            continue;
-        }
-
-        // 超出段数上限：并进最后一段，最后统一按长度硬切。
-        segments[segments.length - 1] = `${segments[segments.length - 1] ?? ''}\n\n${block}`;
+        segments = [...head, tail];
     }
 
     return segments.flatMap((segment) => splitBlock(segment, limit));

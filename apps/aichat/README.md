@@ -17,7 +17,7 @@ QQ 客户端 ──Hook──> QBridge ──OneBot v11 WS──> 本项目 ─�
 - **多轮上下文**：每个群一份共享窗口（多人聊天），默认 **20 条 / 20000 tokens** 双上限，超出按「提问 + 回答」成对丢弃。
 - **发言人前缀**：上下文写成 `昵称: 内容`，模型知道群里谁在说话；也可关闭。
 - **系统提示词外置**：放在 `prompts/` 目录（`system.md` + `groups/<群号>.md` + `{{include}}` 片段），支持 `{botName}`、`{groupId}` 占位符，改完 `/reload` 生效，不用重启。
-- **像人一样回复**：引用触发消息、空行分段拆成多条消息（多段回复）、按 QQ 长度限制自动切分、同群串行保证顺序、失败自动重试。
+- **像人一样回复**：引用触发消息、按换行拆成多条消息（多段回复）、整段太长时按句号拆、同群串行保证顺序、失败自动重试。
 - **管理命令**：`/reset` 清空本群上下文、`/reload` 热重载配置（仅 `bot.owners` 里列出的账号可用）。
 - **可观测**：结构化日志记录连接、触发、耗时、失败原因；不打印密钥。
 - **零框架依赖**：只用 `@snowluma/sdk`（官方 OneBot 客户端），其余是 Node 内置能力。
@@ -188,7 +188,8 @@ npm run build && npm start
 | `groups.blacklist` | `[]` | 永不处理这些群，优先级高于白名单 |
 | `owners` | `[]` | 可以用 `/reset`、`/reload` 的 QQ 号 |
 | `maxReplyChars` | `1200` | 单条消息最大字数，超长自动切分（上限 4500） |
-| `splitParagraphs` | `true` | 空行分隔的段落拆成多条消息（真正的多段回复） |
+| `splitParagraphs` | `true` | 换行（单换行或空行）即分段，每段单独发一条消息 |
+| `sentenceSplitAt` | `40` | 整段没有换行且超过这个字数时按句号拆；`0` 关闭 |
 | `maxReplySegments` | `4` | 一次回复最多拆几条，超出的段落并回最后一条 |
 | `chunkDelayMs` | `400` | 分片之间的间隔，避免刷屏 |
 | `notifyOnError` | `false` | 模型调用失败时是否在群里提示一句 |
@@ -298,6 +299,48 @@ prompts/
 - 引用的图片只在**触发消息**上发送，不带历史图片，避免每轮都重复计费。
 - 端点拒绝多模态时（HTTP 400/415/422）会自动退回纯文本重试一次，并打一条 warn，不会让这条消息直接失败。
 - 关闭：`"vision": { "enabled": false }`。
+### `github`
+
+轮询 GitHub 仓库，出现新 Release（或新提交）时发到指定群。首次运行只记录当前状态、不补发历史。
+
+```jsonc
+{
+    "enabled": true,
+    "intervalSeconds": 300,            // 最小 60
+    "token": "${GITHUB_TOKEN}",        // 可选，提高 API 限额
+    "stateFile": "data/github-state.json",  // 已推送事件的记录，避免重启重复发
+    "postExisting": false,             // 首次运行是否补发当前事件
+    "targets": [
+        {
+            "repo": "rikkahub/rikkahub",
+            "groupIds": [628101497],
+            "kinds": ["release"],      // release / commit，可同时监听
+            "template": {              // 可选：按事件覆盖模板
+                "release": "🐙新版本 {tag}\n{body}\n{url}"
+            }
+        }
+    ]
+}
+```
+
+| 占位符 | release | commit |
+| --- | --- | --- |
+| `{repo}` | owner/repo | owner/repo |
+| `{tag}` | Release tag | — |
+| `{title}` | Release 标题 | 提交标题（首行） |
+| `{body}` | 更新说明（截断 500 字） | 提交正文 |
+| `{author}` | Release 作者 | 提交者 |
+| `{url}` | Release 页面 | commit 页面 |
+| `{sha}` | — | 短 sha |
+| `{date}` | — | 提交时间 |
+
+默认模板就是「🐙Github检测到Release / 🏷[tag] / 标题 / 说明 / 提交者 / 链接 / ---」这套版式。
+监听提交把 `kinds` 改成 `["commit"]`，或 `["release","commit"]` 两个都要。
+
+- 轮询走 GitHub REST API（`/releases`、`/commits`），未认证限额 60 次/小时，`intervalSeconds` 别小于 60；填 `GITHUB_TOKEN` 可放宽到 5000。
+- 状态文件记录 `repo:kind → 最近事件 id`，重启不会重复推送；写失败会在日志里报错但不影响其它目标。
+- 正文字数超过 `bot.maxReplyChars` 会按 QQ 限制自动切成几条发。
+
 ### `logging`
 
 `level`：`debug` / `info` / `warn` / `error` / `silent`，默认 `info`。`debug` 会打印每条被忽略的消息和 token 用量。
@@ -338,7 +381,7 @@ node tools/mock-onebot.mjs
 ### 3. 自动化测试
 
 ```bash
-npm test          # 188 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
+npm test          # 206 个用例：配置、上下文裁剪、切分、模型重试、服务流程、真实 WS、TUI 布局与滚动
 npm run typecheck
 ```
 
@@ -455,6 +498,8 @@ ai-chat/
     qq/
       bot.ts            QBridge OneBot WS 接入（收发只在这里）
       segments.ts       OneBot 消息段解析、@ 检测、非文本占位
+    watch/
+      github.ts         轮询 Release/提交并按模板发群
     chat/
       service.ts        编排：触发判定 → 上下文 → 模型 → 切分 → 发送
       chunk.ts          长回复切分
@@ -486,6 +531,9 @@ ai-chat/
 - 非流式请求：模型生成完整回复后才发群消息，长回复感知延迟较高。
 - 语音/视频/文件仍只以占位符进入上下文；图片已支持（见 `vision` 配置），但需要模型本身支持多模态。
 - 没有 Web 管理界面：改配置用文件 + `/reload`。
+
+
+
 
 
 

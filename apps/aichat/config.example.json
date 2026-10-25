@@ -21,6 +21,7 @@
         "owners": [],
         "maxReplyChars": 1200,
         "splitParagraphs": true,
+        "sentenceSplitAt": 40,
         "maxReplySegments": 4,
         "chunkDelayMs": 400,
         "notifyOnError": false
@@ -56,8 +57,28 @@
         "maxImages": 4,
         "maxBytes": 5242880
     },
-    "logging": {
+    "github": {
+        "enabled": true,
+        "intervalSeconds": 300,
+        "token": "${GITHUB_TOKEN}",
+        "stateFile": "data/github-state.json",
+        "postExisting": false,
+        "targets": [
+            {
+                "repo": "rikkahub/rikkahub",
+                "groupIds": [
+                    628101497
+                ],
+                "kinds": [
+                    "release"
+                ]
+            }
+        ]
+    },    "logging": {
         "level": "info"
     }
 }
+
+
+
 

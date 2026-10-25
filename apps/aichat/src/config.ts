@@ -4,6 +4,9 @@ import type {
     AppConfig,
     BotConfig,
     ContextConfig,
+    GithubConfig,
+    GithubKind,
+    GithubTargetConfig,
     LlmConfig,
     LogLevel,
     OneBotConfig,
@@ -280,6 +283,7 @@ function parseBot(raw: unknown): BotConfig {
             'owners',
             'maxReplyChars',
             'splitParagraphs',
+            'sentenceSplitAt',
             'maxReplySegments',
             'chunkDelayMs',
             'notifyOnError',
@@ -309,14 +313,116 @@ function parseBot(raw: unknown): BotConfig {
         owners: readPositiveIntArray(source, 'owners', 'bot'),
         maxReplyChars: readNumber(source, 'maxReplyChars', 'bot', 1_200, 50, 4_500),
         splitParagraphs: readBoolean(source, 'splitParagraphs', 'bot', true),
+        sentenceSplitAt: readNumber(source, 'sentenceSplitAt', 'bot', 40, 0, 10_000),
         maxReplySegments: readNumber(source, 'maxReplySegments', 'bot', 4, 1, 10),
         chunkDelayMs: readNumber(source, 'chunkDelayMs', 'bot', 400, 0, 10_000),
         notifyOnError: readBoolean(source, 'notifyOnError', 'bot', false),
     };
 }
 
-function parseVision(raw: unknown): VisionConfig {
-    const source = readObject(raw, 'vision');
+const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const GITHUB_KINDS: GithubKind[] = ['release', 'commit'];
+
+function parseGithubTarget(raw: unknown, pathName: string): GithubTargetConfig {
+    const source = readObject(raw, pathName);
+    assertKeys(source, ['repo', 'groupIds', 'kinds', 'template'], pathName);
+
+    const repo = readString(source, 'repo', pathName, '').trim();
+
+    if (!REPO_PATTERN.test(repo)) {
+        throw new ConfigError(`${pathName}.repo 必须是 owner/repo 形式，例如 rikkahub/rikkahub`);
+    }
+
+    const groupIds = readPositiveIntArray(source, 'groupIds', pathName);
+
+    if (groupIds.length === 0) {
+        throw new ConfigError(`${pathName}.groupIds 至少要有一个群号`);
+    }
+
+    const kindsRaw = source['kinds'];
+    let kinds: GithubKind[] = ['release'];
+
+    if (kindsRaw !== undefined) {
+        if (!Array.isArray(kindsRaw) || kindsRaw.length === 0) {
+            throw new ConfigError(`${pathName}.kinds 必须是非空数组，可选 ${GITHUB_KINDS.join('/')}`);
+        }
+
+        kinds = kindsRaw.map((item, index) => {
+            if (typeof item !== 'string' || !GITHUB_KINDS.includes(item as GithubKind)) {
+                throw new ConfigError(
+                    `${pathName}.kinds[${index}] 必须是 ${GITHUB_KINDS.join(' 或 ')}`,
+                );
+            }
+
+            return item as GithubKind;
+        });
+    }
+
+    const template = readObject(source['template'], `${pathName}.template`);
+    const templates: Partial<Record<GithubKind, string>> = {};
+
+    for (const [key, value] of Object.entries(template)) {
+        if (!GITHUB_KINDS.includes(key as GithubKind)) {
+            throw new ConfigError(`${pathName}.template 里未知事件 "${key}"，可选 release/commit`);
+        }
+
+        if (typeof value !== 'string' || value.trim().length === 0) {
+            throw new ConfigError(`${pathName}.template.${key} 必须是非空字符串`);
+        }
+
+        templates[key as GithubKind] = value;
+    }
+
+    const target: GithubTargetConfig = { repo, groupIds, kinds };
+
+    if (Object.keys(templates).length > 0) {
+        target.template = templates;
+    }
+
+    return target;
+}
+
+function parseGithub(raw: unknown): GithubConfig {
+    const source = readObject(raw, 'github');
+    assertKeys(
+        source,
+        ['enabled', 'intervalSeconds', 'token', 'stateFile', 'postExisting', 'targets'],
+        'github',
+    );
+
+    const targetsRaw = source['targets'];
+
+    if (targetsRaw !== undefined && !Array.isArray(targetsRaw)) {
+        throw new ConfigError('github.targets 必须是数组');
+    }
+
+    const targets = (targetsRaw ?? []).map((item, index) =>
+        parseGithubTarget(item, `github.targets[${index}]`),
+    );
+    const stateFile = readString(source, 'stateFile', 'github', 'data/github-state.json').trim();
+
+    if (stateFile.length === 0) {
+        throw new ConfigError('github.stateFile 不能为空');
+    }
+
+    const config: GithubConfig = {
+        enabled: readBoolean(source, 'enabled', 'github', false),
+        intervalSeconds: readNumber(source, 'intervalSeconds', 'github', 300, 60, 86_400),
+        stateFile,
+        postExisting: readBoolean(source, 'postExisting', 'github', false),
+        targets,
+    };
+
+    const token = readString(source, 'token', 'github', '').trim();
+
+    if (token.length > 0) {
+        config.token = token;
+    }
+
+    return config;
+}
+
+function parseVision(raw: unknown): VisionConfig {    const source = readObject(raw, 'vision');
     assertKeys(source, ['enabled', 'maxImages', 'maxBytes'], 'vision');
 
     return {
@@ -438,7 +544,7 @@ function parsePrompt(raw: unknown): PromptConfig {
 export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.env): AppConfig {
     const expanded = expandEnv(rawInput, 'config', env);
     const root = readObject(expanded, 'config');
-    assertKeys(root, ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'logging'], 'config');
+    assertKeys(root, ['onebot', 'bot', 'context', 'llm', 'prompt', 'vision', 'github', 'logging'], 'config');
 
     const logging = readObject(root['logging'], 'logging');
     assertKeys(logging, ['level'], 'logging');
@@ -456,6 +562,7 @@ export function parseConfig(rawInput: unknown, env: NodeJS.ProcessEnv = process.
         llm: parseLlm(root['llm']),
         prompt: parsePrompt(root['prompt']),
         vision: parseVision(root['vision']),
+        github: parseGithub(root['github']),
         logging: { level },
     };
 }
@@ -534,3 +641,6 @@ export class ConfigStore {
         return this.configValue;
     }
 }
+
+
+
