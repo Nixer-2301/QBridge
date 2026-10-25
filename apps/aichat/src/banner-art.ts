@@ -7,7 +7,7 @@ export const SPLASH_GLYPHS: string[][] = [
         "██║   ██║",
         "██║▄▄ ██║",
         "╚██████╔╝",
-        " ╚══▀▀═╝ ",
+        " ╚═════╝ ",
     ],
     [
         "  ",
@@ -66,4 +66,5 @@ export const SPLASH_GLYPHS: string[][] = [
         "╚══════╝",
     ],
 ];
+
 

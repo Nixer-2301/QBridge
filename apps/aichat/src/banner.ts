@@ -49,8 +49,8 @@ function linesWidth(lines: readonly string[]): number {
 export function fitSplash(cols: number): string[] {
     const budget = Math.max(40, Math.floor(cols) - 2);
 
-    // 上限 8：再宽字就会散开，字号感反而变差。
-    for (let gap = 8; gap >= 0; gap -= 1) {
+    // 上限 3：BRIDGE 保持紧凑，再大字母就散了。
+    for (let gap = 3; gap >= 0; gap -= 1) {
         const lines = composeSplash(gap);
 
         if (linesWidth(lines) <= budget) {
@@ -188,4 +188,5 @@ export async function showSplash(options: SplashOptions = {}): Promise<void> {
 
     stream.write(`${CLEAR}${renderFrame(art, frames, { color: true, width })}\n\n`);
 }
+
 

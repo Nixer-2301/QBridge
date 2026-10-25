@@ -132,17 +132,13 @@ describe('横幅配色', () => {
 
 
 describe('横幅自适应宽度', () => {
-    it('行数恒为 6，宽度随终端变宽', () => {
-        const narrow = fitSplash(80);
-        const wide = fitSplash(140);
-
-        expect(narrow).toHaveLength(6);
-        expect(wide).toHaveLength(6);
-
+    it('行数恒为 6，宽度在封顶后保持稳定', () => {
         const widthOf = (lines: string[]) => Math.max(...lines.map((line) => line.length));
 
-        expect(widthOf(narrow)).toBeLessThanOrEqual(78);
-        expect(widthOf(wide)).toBeGreaterThan(widthOf(narrow) + 20);
+        expect(fitSplash(80)).toHaveLength(6);
+        expect(widthOf(fitSplash(80))).toBeLessThanOrEqual(78);
+        // 字距上限 3，宽屏也不会越拉越散
+        expect(widthOf(fitSplash(200))).toBe(widthOf(fitSplash(120)));
     });
 
     it('宽度不够时收缩字间距，不会超出终端', () => {
@@ -160,4 +156,5 @@ describe('横幅自适应宽度', () => {
         expect(art).toContain('╔═══');
     });
 });
+
 
